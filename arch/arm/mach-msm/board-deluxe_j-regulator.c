@@ -574,9 +574,12 @@ int deluxe_j_pm8921_regulator_pdata_len __devinitdata =
 	ARRAY_SIZE(deluxe_j_pm8921_regulator_pdata);
 
 struct rpm_regulator_platform_data deluxe_j_rpm_regulator_pdata __devinitdata = {
-	.init_data		= deluxe_j_rpm_regulator_init_data,
-	.num_regulators		= ARRAY_SIZE(deluxe_j_rpm_regulator_init_data),
-	.version		= RPM_VREG_VERSION_8960,
-	.vreg_id_vdd_mem	= RPM_VREG_ID_PM8921_L24,
-	.vreg_id_vdd_dig	= RPM_VREG_ID_PM8921_S3,
+	.init_data		  = deluxe_j_rpm_regulator_init_data,
+	.num_regulators		  = ARRAY_SIZE(deluxe_j_rpm_regulator_init_data),
+	.version		  = RPM_VREG_VERSION_8960,
+	.vreg_id_vdd_mem	  = RPM_VREG_ID_PM8921_L24,
+	.vreg_id_vdd_dig	  = RPM_VREG_ID_PM8921_S3,
+	.consumer_map		  = msm_rpm_regulator_consumer_mapping,
+	.consumer_map_len = ARRAY_SIZE(msm_rpm_regulator_consumer_mapping),
+	.requires_tcxo_workaround = true
 };
