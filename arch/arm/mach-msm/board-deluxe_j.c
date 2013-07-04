@@ -1013,28 +1013,40 @@ static void __init deluxe_j_early_reserve(void)
 }
 
 #ifdef CONFIG_HTC_BATT_8960
+static int pm8921_is_wireless_charger(void)
+{
+	int usb_in, dc_in;
+
+	usb_in = pm8921_is_usb_chg_plugged_in();
+	dc_in = pm8921_is_dc_chg_plugged_in();
+	pr_info("%s: usb_in=%d, dc_in=%d\n", __func__, usb_in, dc_in);
+	if (!usb_in && dc_in)
+		return 1;
+	else
+		return 0;
+}
+
+#ifdef CONFIG_HTC_PNPMGR
+extern int pnpmgr_battery_charging_enabled(int charging_enabled);
+#endif 
+static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
+
 static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.guage_driver = 0,
 	.chg_limit_active_mask = HTC_BATT_CHG_LIMIT_BIT_TALK |
-								HTC_BATT_CHG_LIMIT_BIT_NAVI,
-	.critical_low_voltage_mv = 3100,
-	.critical_alarm_voltage_mv = 3000,
+								HTC_BATT_CHG_LIMIT_BIT_NAVI |
+								HTC_BATT_CHG_LIMIT_BIT_THRML,
+	.critical_low_voltage_mv = 3200,
+	.critical_alarm_vol_ptr = critical_alarm_voltage_mv,
+	.critical_alarm_vol_cols = sizeof(critical_alarm_voltage_mv) / sizeof(int),
 	.overload_vol_thr_mv = 4000,
 	.overload_curr_thr_ma = 0,
 	
-#ifdef CONFIG_SMB349_CHARGER
-	.icharger.name = "smb349",
-	.icharger.sw_safetytimer = 1,
-	.icharger.set_limit_charge_enable = smb349_limit_charge_enable,
-	.icharger.get_attr_text = pm8921_charger_get_attr_text_with_ext_charger,
-	.icharger.enable_5v_output = smb349_enable_5v_output,
-#else
 	.icharger.name = "pm8921",
-	.icharger.sw_safetytimer = 0,
 	.icharger.set_limit_charge_enable = pm8921_limit_charge_enable,
 	.icharger.get_attr_text = pm8921_charger_get_attr_text,
+	.icharger.max_input_current = pm8921_set_hsml_target_ma,
 	.icharger.enable_5v_output = NULL,
-#endif
 	.icharger.get_charging_source = pm8921_get_charging_source,
 	.icharger.get_charging_enabled = pm8921_get_charging_enabled,
 	.icharger.set_charger_enable = pm8921_charger_enable,
@@ -1044,11 +1056,11 @@ static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.icharger.is_ovp = pm8921_is_charger_ovp,
 	.icharger.is_batt_temp_fault_disable_chg =
 						pm8921_is_batt_temp_fault_disable_chg,
-	.icharger.is_vbus_unstable = pm8921_is_vbus_unstable,
 	.icharger.charger_change_notifier_register =
 						cable_detect_register_notifier,
 	.icharger.dump_all = pm8921_dump_all,
-
+	.icharger.is_safty_timer_timeout = pm8921_is_chg_safety_timer_timeout,
+	.icharger.is_battery_full_eoc_stop = pm8921_is_batt_full_eoc_stop,
 
 	
 	.igauge.name = "pm8921",
@@ -1066,6 +1078,14 @@ static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.igauge.enable_lower_voltage_alarm = pm8xxx_batt_lower_alarm_enable,
 	.igauge.set_lower_voltage_alarm_threshold =
 						pm8xxx_batt_lower_alarm_threshold_set,
+	
+#ifdef CONFIG_THERMAL_TSENS8960
+	.get_thermal_sensor_temp = tsens_get_sensor_temp,
+#endif
+	
+#ifdef CONFIG_HTC_PNPMGR
+	.notify_pnpmgr_charging_enabled = pnpmgr_battery_charging_enabled,
+#endif 
 };
 static struct platform_device htc_battery_pdev = {
 	.name = "htc_battery",
@@ -4079,7 +4099,7 @@ struct platform_device device_htc_ramdump = {
 };
 
 static struct platform_device *common_devices[] __initdata = {
-	&msm8960_device_acpuclk,
+	&msm8064_device_acpuclk,
 	&ram_console_device,
 	&apq8064_device_dmov,
 	&apq8064_device_qup_i2c_gsbi1,
@@ -4958,12 +4978,12 @@ static void __init deluxe_j_common_init(void)
 	if (system_rev == XA)
 		clk_ignor_list_add("msm_sdcc.3", "core_clk", &apq8064_clock_init_data);
 	else if (system_rev >= XB)
-		clk_ignor_list_add("msm_sdcc.4", "core_clk", &deluxe_j_clock_init_data_xb);
+		clk_ignor_list_add("msm_sdcc.4", "core_clk", &apq8064_clock_init_data_xb);
 	
 	if ( system_rev == XA )
 		msm_clock_init(&apq8064_clock_init_data);
 	else if ( system_rev >= XB )
-		msm_clock_init(&deluxe_j_clock_init_data_xb);
+		msm_clock_init(&apq8064_clock_init_data_xb);
 	deluxe_j_init_gpiomux();
 #ifdef CONFIG_RESET_BY_CABLE_IN
 	pr_info("[CABLE] Enable Ac Reset Function.(%d) \n", system_rev);
