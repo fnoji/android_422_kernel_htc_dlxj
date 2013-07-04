@@ -1578,6 +1578,10 @@ void __init deluxe_j_init_fb(void)
 		wa_xo = msm_xo_get(MSM_XO_TCXO_D0, "mipi");
 	}
 	msm_fb_register_device("dtv", &dtv_pdata);
+#ifdef CONFIG_FB_MSM_WRITEBACK_MSM_PANEL
+	platform_device_register(&wfd_panel_device);
+	platform_device_register(&wfd_device);
+#endif
 }
 
 static int __init deluxe_j_panel_init(void)
