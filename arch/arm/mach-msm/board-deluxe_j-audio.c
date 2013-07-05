@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include "board-deluxe_j.h"
 #include "../sound/soc/msm/msm-pcm-routing.h"
+#include "../sound/soc/msm/msm-compr-q6.h"
 
 #include <linux/gpio.h>
 #include <mach/tpa6185.h>
