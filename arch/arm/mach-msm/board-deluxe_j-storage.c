@@ -450,9 +450,9 @@ int deluxe_j_wifi_power(int on)
 #if 0
 			writel(0x1FDB, SDC3_HDRV_PULL_CTL_ADDR);
 #else
-			sdc_pad_gpio_config(SDC3_HDRV_PULL_CTL_ADDR,
-					BIT_HDRIV_PULL_UP, BIT_HDRIV_PULL_UP,
-					HDRIV_STR_8MA, HDRIV_STR_8MA, HDRIV_STR_8MA);
+		sdc_pad_gpio_config(SDC3_HDRV_PULL_CTL_ADDR,
+				BIT_HDRIV_PULL_UP, BIT_HDRIV_PULL_UP,
+				HDRIV_STR_8MA, HDRIV_STR_8MA, HDRIV_STR_8MA);
 #endif
 		} else {
 			config_gpio_table(wifi_on_gpio_table,

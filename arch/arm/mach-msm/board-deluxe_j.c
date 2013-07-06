@@ -4967,15 +4967,6 @@ static void __init deluxe_j_common_init(void)
 #ifdef CONFIG_SERIAL_IRDA
 	deluxe_j_irda_init();
 #endif
-
-#ifdef CONFIG_BT
-	
-	bt_export_bd_address();
-	msm_uart_dm6_pdata.wakeup_irq = PM8921_GPIO_IRQ(PM8921_IRQ_BASE, BT_HOST_WAKE);
-	msm_device_uart_dm6.name = "msm_serial_hs_brcm";
-	msm_device_uart_dm6.dev.platform_data = &msm_uart_dm6_pdata;
-#endif
-
 	
 #ifdef CONFIG_SMB349_CHARGER
 	if(system_rev < XD)
