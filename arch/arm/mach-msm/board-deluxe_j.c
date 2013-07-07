@@ -998,8 +998,8 @@ static void __init deluxe_j_reserve(void)
 static void __init place_movable_zone(void)
 {
 #ifdef CONFIG_ENABLE_DMM
-	movable_reserved_start = monarudo_reserve_info.low_unstable_address;
-	movable_reserved_size = monarudo_reserve_info.max_unstable_size;
+	movable_reserved_start = deluxe_j_reserve_info.low_unstable_address;
+	movable_reserved_size = deluxe_j_reserve_info.max_unstable_size;
 	pr_info("movable zone start %lx size %lx\n",
 		movable_reserved_start, movable_reserved_size);
 #endif
@@ -1396,18 +1396,10 @@ static void deluxe_j_usb_dpdn_switch(int path)
 {
 	switch (path) {
 	case PATH_USB:
-		if (system_rev == XA) {
-			pm8xxx_gpio_config(switch_to_usb_pmic_gpio_table_xa[0].gpio, &switch_to_usb_pmic_gpio_table_xa[0].config);
-		} else {
-			pm8xxx_gpio_config(switch_to_usb_pmic_gpio_table_xb[0].gpio, &switch_to_usb_pmic_gpio_table_xb[0].config);
-		}
+		pm8xxx_gpio_config(switch_to_usb_pmic_gpio_table[0].gpio, &switch_to_usb_pmic_gpio_table[0].config);
 		break;
 	case PATH_MHL:
-		if (system_rev == XA) {
-			pm8xxx_gpio_config(switch_to_mhl_pmic_gpio_table_xa[0].gpio, &switch_to_mhl_pmic_gpio_table_xa[0].config);
-		} else {
-			pm8xxx_gpio_config(switch_to_mhl_pmic_gpio_table_xb[0].gpio, &switch_to_mhl_pmic_gpio_table_xb[0].config);
-		}
+		pm8xxx_gpio_config(switch_to_mhl_pmic_gpio_table[0].gpio, &switch_to_mhl_pmic_gpio_table[0].config);
 		break;
 	}
 	sii9234_change_usb_owner((path == PATH_MHL) ? 1 : 0);
@@ -1416,6 +1408,8 @@ static void deluxe_j_usb_dpdn_switch(int path)
 static struct regulator *reg_8921_l12;
 static struct regulator *reg_8921_s4;
 static struct regulator *reg_8921_l11;
+static DEFINE_MUTEX(mhl_lpm_lock);
+
 
 #define _GET_REGULATOR(var, name) do {                          \
         var = regulator_get(NULL, name);                        \
@@ -1459,6 +1453,47 @@ static void mhl_sii9234_1v2_power(bool enable)
 	prev_on = enable;
 }
 
+static int mhl_sii9234_lpm_power(bool enable)
+{
+	int rc = 0;
+	int lpm_on_value = 0;
+	int lpm_off_value = 100000;
+
+	mutex_lock(&mhl_lpm_lock);
+	if (!reg_8921_l11)
+		_GET_REGULATOR(reg_8921_l11, "8921_l11");
+	if (!reg_8921_l12)
+		_GET_REGULATOR(reg_8921_l12, "8921_l12");
+
+	pr_info("[DISP] %s (%s)\n", __func__, (enable) ? "on" : "off");
+
+	rc = regulator_set_optimum_mode(reg_8921_l11,
+		(enable)? lpm_on_value : lpm_off_value);
+
+	if (rc < 0)
+		pr_err("%s: set_lpm reg_8921_l11 failed rc=%d\n", __func__, rc);
+	rc = regulator_enable(reg_8921_l11);
+	if (rc) {
+		pr_err("%s reg_8921_l11 enable failed, rc=%d\n", __func__, rc);
+		mutex_unlock(&mhl_lpm_lock);
+		return rc;
+	}
+
+	rc = regulator_set_optimum_mode(reg_8921_l12,
+		(enable)? lpm_on_value : lpm_off_value);
+
+	if (rc < 0)
+		pr_err("%s: set_lpm reg_8921_l12 failed rc=%d\n", __func__, rc);
+	rc = regulator_enable(reg_8921_l12);
+	if (rc) {
+		pr_err("%s reg_8921_l12 enable failed, rc=%d\n", __func__, rc);
+		mutex_unlock(&mhl_lpm_lock);
+		return rc;
+	}
+
+	mutex_unlock(&mhl_lpm_lock);
+	return rc;
+}
 static int mhl_sii9234_all_power(bool enable)
 {
 	static bool prev_on = false;
@@ -1572,6 +1607,7 @@ static T_MHL_PLATFORM_DATA mhl_sii9234_device_data = {
 #ifdef CONFIG_FB_MSM_HDMI_MHL
 	.mhl_usb_switch		= deluxe_j_usb_dpdn_switch,
 	.mhl_1v2_power = mhl_sii9234_1v2_power,
+	.mhl_lpm_power = mhl_sii9234_lpm_power,
 	.enable_5v = hdmi_enable_5v,
 #endif
 	.power = mhl_sii9234_power,
@@ -1700,7 +1736,8 @@ out:
 
 static struct android_usb_platform_data android_usb_pdata = {
 	.vendor_id	= 0x0BB4,
-	.product_id	= 0x0dfe,
+	
+	.product_id	= 0x0dea,
 	.version	= 0x0100,
 	.product_name		= "Android Phone",
 	.manufacturer_name	= "HTC",
@@ -1710,7 +1747,7 @@ static struct android_usb_platform_data android_usb_pdata = {
 	.functions = usb_functions_all,
 	.update_pid_and_serial_num = usb_diag_update_pid_and_serial_num,
 	.usb_id_pin_gpio = USB1_HS_ID_GPIO,
-	.usb_rmnet_interface = "HSIC,HSIC",
+	.usb_rmnet_interface = "HSIC:HSIC",
 	.usb_diag_interface = "diag,diag_mdm",
 	.fserial_init_string = "HSIC:modem,tty,tty:autobot,tty:serial,tty:autobot",
 	.serial_number = "000000000000",
@@ -1761,7 +1798,7 @@ static struct msm_bus_scale_pdata usb_bus_scale_pdata = {
 };
 
 static int phy_init_seq[] = {
-       0x58, 0x81, 
+       0x37, 0x81, 
        0x3c, 0x82, 
        -1
 };
@@ -1852,7 +1889,7 @@ static int64_t deluxe_j_get_usbid_adc(void)
        return adc;
 }
 
-static struct pm8xxx_gpio_init usb_id_pmic_gpio[] = {
+struct pm8xxx_gpio_init usb_id_pmic_gpio[] = {
 	PM8XXX_GPIO_INIT(USB1_HS_ID_GPIO, PM_GPIO_DIR_IN,
 			 PM_GPIO_OUT_BUF_CMOS, 0, PM_GPIO_PULL_NO,
 			 PM_GPIO_VIN_S4, PM_GPIO_STRENGTH_HIGH,
@@ -1866,7 +1903,6 @@ static void deluxe_j_config_usb_id_gpios(bool output)
 	if (rc)
 		pr_info("[USB BOARD] %s: Config ERROR: GPIO=%u, rc=%d\n",
 		__func__, usb_id_pmic_gpio[0].gpio, rc);
-
 	if (output) {
 		gpio_direction_output(PM8921_GPIO_PM_TO_SYS(USB1_HS_ID_GPIO),1);
 		pr_info("[CABLE] %s: %d output high\n",  __func__, USB1_HS_ID_GPIO);
@@ -1933,6 +1969,9 @@ void deluxe_j_cable_detect_register(void)
 	cable_detect_pdata.usb_id_pin_gpio = PM8921_GPIO_PM_TO_SYS(USB1_HS_ID_GPIO);
 	cable_detect_pdata.mhl_reset_gpio = PM8921_GPIO_PM_TO_SYS(MHL_RSTz);
 
+	if (board_mfg_mode() == 4)
+		cable_detect_pdata.usb_id_pin_gpio = 0;
+
 	platform_device_register(&cable_detect_device);
 }
 
@@ -1941,11 +1980,27 @@ void deluxe_j_pm8xxx_adc_device_register(void)
 	pr_info("%s: Register PM8XXX ADC device. rev: %d\n",
 		__func__, system_rev);
 	deluxe_j_cable_detect_register();
+
 }
 
+struct pm8xxx_gpio_init otg_pmic_gpio_pvt[] = {
+	PM8XXX_GPIO_INIT(VREG_S4_1V8_PVT, PM_GPIO_DIR_OUT,
+			 PM_GPIO_OUT_BUF_CMOS, 0, PM_GPIO_PULL_NO,
+			 PM_GPIO_VIN_S4, PM_GPIO_STRENGTH_LOW,
+			 PM_GPIO_FUNC_NORMAL, 0, 0),
+};
 void deluxe_j_add_usb_devices(void)
 {
+	int rc;
 	printk(KERN_INFO "%s rev: %d\n", __func__, system_rev);
+
+	if (system_rev >= PVT) {
+		rc = pm8xxx_gpio_config(otg_pmic_gpio_pvt[0].gpio,
+				&otg_pmic_gpio_pvt[0].config);
+		if (rc)
+			pr_info("[USB_BOARD] %s: Config ERROR: GPIO=%u, rc=%d\n",
+					__func__, otg_pmic_gpio_pvt[0].gpio, rc);
+	}
 
 	android_usb_pdata.products[0].product_id =
 			android_usb_pdata.product_id;
@@ -1959,8 +2014,8 @@ void deluxe_j_add_usb_devices(void)
 
 	
 	if (board_mfg_mode() == 0) {
-		android_usb_pdata.nluns = 2;
-		android_usb_pdata.cdrom_lun = 0x2;
+		android_usb_pdata.nluns = 1;
+		android_usb_pdata.cdrom_lun = 0x1;
 	}
 	android_usb_pdata.serial_number = board_serialno();
 
@@ -1991,9 +2046,7 @@ static uint32_t headset_cpu_gpio_xa[] = {
 	GPIO_CFG(CPU_1WIRE_TX, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 };
 
-static uint32_t headset_onewire_gpio[] = {
-	GPIO_CFG(CPU_1WIRE_RX, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-	GPIO_CFG(CPU_1WIRE_TX, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+static uint32_t headset_cpu_gpio_xa[] = {
 	GPIO_CFG(CPU_1WIRE_RX, 1, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 	GPIO_CFG(CPU_1WIRE_TX, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 };
@@ -2030,28 +2083,6 @@ static void headset_power(int enable)
 		gpio_set_value(PM8921_GPIO_PM_TO_SYS(V_AUD_HSMIC_2V85_EN), 0);
 }
 
-static void uart_tx_gpo(int mode)
-{
-	switch (mode) {
-		case 0:
-			gpio_tlmm_config(headset_onewire_gpio[1], GPIO_CFG_ENABLE);
-			gpio_set_value_cansleep(CPU_1WIRE_TX, 0);
-			break;
-		case 1:
-			gpio_tlmm_config(headset_onewire_gpio[1], GPIO_CFG_ENABLE);
-			gpio_set_value_cansleep(CPU_1WIRE_TX, 1);
-			break;
-		case 2:
-			gpio_tlmm_config(headset_onewire_gpio[3], GPIO_CFG_ENABLE);
-			break;
-	}
-}
-
-static void uart_lv_shift_en(int enable)
-{
-	gpio_set_value_cansleep(PM8921_GPIO_PM_TO_SYS(AUD_UART_OEz), enable);
-}
-
 static struct htc_headset_pmic_platform_data htc_headset_pmic_data = {
 	.driver_flag		= DRIVER_HS_PMIC_ADC,
 	.hpin_gpio		= PM8921_GPIO_PM_TO_SYS(EARPHONE_DETz),
@@ -2075,6 +2106,13 @@ static struct platform_device htc_headset_pmic = {
 	},
 };
 
+static uint32_t headset_1wire_gpio[] = {
+	GPIO_CFG(CPU_1WIRE_RX, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+	GPIO_CFG(CPU_1WIRE_TX, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+	GPIO_CFG(CPU_1WIRE_RX, 1, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+	GPIO_CFG(CPU_1WIRE_TX, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+};
+
 static struct htc_headset_1wire_platform_data htc_headset_1wire_data = {
 	.tx_level_shift_en	= PM8921_GPIO_PM_TO_SYS(AUD_UART_OEz),
 	.uart_sw		= 0,
@@ -2090,6 +2128,29 @@ static struct platform_device htc_headset_one_wire = {
 		.platform_data	= &htc_headset_1wire_data,
 	},
 };
+
+static void uart_tx_gpo(int mode)
+{
+	switch (mode) {
+		case 0:
+			gpio_tlmm_config(headset_1wire_gpio[1], GPIO_CFG_ENABLE);
+			gpio_set_value_cansleep(CPU_1WIRE_TX, 0);
+			break;
+		case 1:
+			gpio_tlmm_config(headset_1wire_gpio[1], GPIO_CFG_ENABLE);
+			gpio_set_value_cansleep(CPU_1WIRE_TX, 1);
+			break;
+		case 2:
+			gpio_tlmm_config(headset_1wire_gpio[3], GPIO_CFG_ENABLE);
+			break;
+	}
+}
+
+static void uart_lv_shift_en(int enable)
+{
+	gpio_set_value_cansleep(PM8921_GPIO_PM_TO_SYS(AUD_UART_OEz), enable);
+}
+
 
 static struct platform_device *headset_devices[] = {
 	&htc_headset_pmic,
