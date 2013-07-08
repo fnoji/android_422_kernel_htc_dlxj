@@ -4510,8 +4510,8 @@ struct i2c_registry {
 
 static struct mpu3050_platform_data mpu3050_data = {
 	.int_config = 0x10,
-	.orientation = {  0, 1,  0,
-			  1, 0,  0,
+        .orientation = { -1, 0,  0,
+                          0, 1,  0,
 			  0, 0, -1 },
 	.level_shifter = 0,
 
@@ -4520,9 +4520,9 @@ static struct mpu3050_platform_data mpu3050_data = {
 		.adapt_num = MSM8064_GSBI2_QUP_I2C_BUS_ID, 
 		.bus = EXT_SLAVE_BUS_SECONDARY,
 		.address = 0x30 >> 1,
-		.orientation = {  1,  0,  0,
-				  0, -1,  0,
-				  0,  0, -1 },
+                .orientation = { -1, 0,  0,
+                                  0, 1,  0,
+                                  0, 0, -1 },
 
 	},
 	.compass = {
