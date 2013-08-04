@@ -466,8 +466,6 @@ static struct device_attribute htc_set_delta_attrs[] = {
 		htc_battery_set_network_search),
 	__ATTR(navigation, S_IWUSR | S_IWGRP, NULL,
 		htc_battery_set_navigation),
-	__ATTR(disable_limit_chg, S_IWUSR | S_IWGRP, NULL,
-		htc_battery_set_disable_limit_chg),
 };
 
 static int htc_battery_create_attrs(struct device *dev)
@@ -769,13 +767,6 @@ int htc_battery_core_update_changed(void)
 			battery_over_loading = 0;
 	}
 
-	if (battery_core_info.func.func_notify_pnpmgr_charging_enabled) {
-		if (battery_core_info.rep.charging_enabled !=
-				new_batt_info_rep.charging_enabled)
-			battery_core_info.func.func_notify_pnpmgr_charging_enabled(
-										new_batt_info_rep.charging_enabled);
-	}
-
 	memcpy(&battery_core_info.rep, &new_batt_info_rep, sizeof(struct battery_info_reply));
 
 	if (battery_core_info.rep.batt_temp > 680) {
@@ -921,9 +912,6 @@ int htc_battery_core_register(struct device *dev,
 	if (htc_battery->func_set_full_level)
 		battery_core_info.func.func_set_full_level =
 					htc_battery->func_set_full_level;
-	if (htc_battery->func_notify_pnpmgr_charging_enabled)
-		battery_core_info.func.func_notify_pnpmgr_charging_enabled =
-					htc_battery->func_notify_pnpmgr_charging_enabled;
 
 	
 	for (i = 0; i < ARRAY_SIZE(htc_power_supplies); i++) {
