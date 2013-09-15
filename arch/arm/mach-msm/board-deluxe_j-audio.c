@@ -28,6 +28,7 @@
 #define HAC_PAMP_GPIO	6
 static atomic_t q6_effect_mode = ATOMIC_INIT(-1);
 extern unsigned int system_rev;
+extern unsigned int engineerid;
 
 static int deluxej_get_hw_component(void)
 {
