@@ -898,6 +898,7 @@ static struct platform_device mdm_8064_device = {
 };
 
 #ifdef CONFIG_BT
+#if 0
 static struct msm_serial_hs_platform_data msm_uart_dm6_pdata = {
 	.inject_rx_on_wakeup = 0,
 
@@ -905,7 +906,7 @@ static struct msm_serial_hs_platform_data msm_uart_dm6_pdata = {
 	.bt_wakeup_pin = PM8921_GPIO_PM_TO_SYS(BT_WAKE),
 	.host_wakeup_pin = PM8921_GPIO_PM_TO_SYS(BT_HOST_WAKE),
 };
-
+#endif
 static struct platform_device deluxe_j_rfkill = {
 	.name = "deluxe_j_rfkill",
 	.id = -1,
@@ -1015,6 +1016,7 @@ static void __init deluxe_j_early_reserve(void)
 }
 
 #ifdef CONFIG_HTC_BATT_8960
+#if 0
 static int pm8921_is_wireless_charger(void)
 {
 	int usb_in, dc_in;
@@ -1027,6 +1029,7 @@ static int pm8921_is_wireless_charger(void)
 	else
 		return 0;
 }
+#endif
 
 static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.guage_driver = 0,
@@ -4040,7 +4043,7 @@ static struct platform_device vibrator_pwm_device_XC = {
 };
 
 
-static struct ramdump_platform_data ramdump_data_1G = {
+static struct ramdump_platform_data ramdump_data_2G = {
 	.count = 1,
 	.region = {
 		{
@@ -4948,12 +4951,12 @@ static void __init deluxe_j_common_init(void)
 	if (system_rev == XA)
 		clk_ignor_list_add("msm_sdcc.3", "core_clk", &apq8064_clock_init_data);
 	else if (system_rev >= XB)
-		clk_ignor_list_add("msm_sdcc.4", "core_clk", &apq8064_clock_init_data_xb);
+		clk_ignor_list_add("msm_sdcc.4", "core_clk", &apq8064_clock_init_data);
 	
 	if ( system_rev == XA )
 		msm_clock_init(&apq8064_clock_init_data);
 	else if ( system_rev >= XB )
-		msm_clock_init(&apq8064_clock_init_data_xb);
+		msm_clock_init(&apq8064_clock_init_data);
 	deluxe_j_init_gpiomux();
 #ifdef CONFIG_RESET_BY_CABLE_IN
 	pr_info("[CABLE] Enable Ac Reset Function.(%d) \n", system_rev);
