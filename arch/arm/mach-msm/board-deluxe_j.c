@@ -4951,12 +4951,12 @@ static void __init deluxe_j_common_init(void)
 	if (system_rev == XA)
 		clk_ignor_list_add("msm_sdcc.3", "core_clk", &apq8064_clock_init_data);
 	else if (system_rev >= XB)
-		clk_ignor_list_add("msm_sdcc.4", "core_clk", &apq8064_clock_init_data);
+		clk_ignor_list_add("msm_sdcc.4", "core_clk", &apq8064_clock_init_data_r2);
 	
 	if ( system_rev == XA )
 		msm_clock_init(&apq8064_clock_init_data);
 	else if ( system_rev >= XB )
-		msm_clock_init(&apq8064_clock_init_data);
+		msm_clock_init(&apq8064_clock_init_data_r2);
 	deluxe_j_init_gpiomux();
 #ifdef CONFIG_RESET_BY_CABLE_IN
 	pr_info("[CABLE] Enable Ac Reset Function.(%d) \n", system_rev);
