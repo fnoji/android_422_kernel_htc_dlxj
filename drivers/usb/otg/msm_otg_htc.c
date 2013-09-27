@@ -57,21 +57,10 @@ static int htc_otg_vbus;
 static int USB_disabled;
 static struct msm_otg *the_msm_otg;
 
-static int re_enable_host;
-static int stop_usb_host;
-
 enum {
     NOT_ON_AUTOBOT,
     DOCK_ON_AUTOBOT,
     HTC_MODE_RUNNING
-};
-
-
-enum {
-	DEFAULT_STATE,
-	TRY_STOP_HOST_STATE,
-	STOP_HOST_STATE,
-	TRY_ENABLE_HOST_STATE
 };
 
 static DEFINE_MUTEX(smwork_sem);
@@ -1158,7 +1147,7 @@ skip_phy_resume:
 		enable_irq(motg->irq);
 	}
 
-	USBH_INFO("USB exited from low power mode\n");
+	USBH_DEBUG("USB exited from low power mode\n");
 
 	return 0;
 }
@@ -1275,21 +1264,6 @@ static void msm_otg_start_host(struct usb_otg *otg, int on)
 
 	if (!otg->host)
 		return;
-
-	if (USB_disabled) {
-		if (stop_usb_host == TRY_STOP_HOST_STATE) {
-			USBH_INFO("[USB_disabled] %s(%d) to stop host \n", __func__ , on);
-			stop_usb_host = STOP_HOST_STATE;
-		} else {
-			USBH_INFO("[USB_disabled] %s(%d) return\n", __func__ , on);
-			
-			if (on) {
-				re_enable_host = TRY_ENABLE_HOST_STATE;
-				stop_usb_host = STOP_HOST_STATE;
-			}
-			return;
-		}
-	}
 
 	hcd = bus_to_hcd(otg->host);
 
@@ -2338,10 +2312,6 @@ static void msm_otg_sm_work(struct work_struct *w)
 				queue_work(motg->usb_wq, &motg->notifier_work);
 			}
 
-			if (check_htc_mode_status() != NOT_ON_AUTOBOT) {
-				htc_mode_enable(0);
-				android_switch_default();
-			}
 			USBH_INFO("!id  || id_a/b || !b_sess_vld\n");
 			motg->chg_state = USB_CHG_STATE_UNDEFINED;
 			motg->chg_type = USB_INVALID_CHARGER;
@@ -2559,18 +2529,6 @@ static void msm_otg_sm_work(struct work_struct *w)
 		} else if (!test_bit(ID, &motg->inputs)) {
 			msm_hsusb_vbus_power(motg, 1);
 		}
-
-		if (USB_disabled && stop_usb_host != STOP_HOST_STATE) {
-			USBH_INFO("[USB_disabled] disable USB Host function\n");
-			stop_usb_host = TRY_STOP_HOST_STATE;
-			re_enable_host = TRY_ENABLE_HOST_STATE;
-			msm_otg_start_host(otg, 0);
-		} else if (!USB_disabled && re_enable_host == TRY_ENABLE_HOST_STATE) {
-			USBH_INFO("[USB_disabled] re-enable USB Host function\n");
-			re_enable_host = DEFAULT_STATE;
-			stop_usb_host = DEFAULT_STATE;
-			msm_otg_start_host(otg, 1);
-		}
 		break;
 	case OTG_STATE_A_HOST:
 		dev_dbg(otg->dev, "OTG_STATE_A_HOST state\n");
@@ -2625,12 +2583,6 @@ static void msm_otg_sm_work(struct work_struct *w)
 			motg->chg_type = USB_INVALID_CHARGER;
 			msm_otg_notify_charger(motg, 0);
 			msm_hsusb_vbus_power(motg, 1);
-			if (USB_disabled) {
-				USBH_INFO("[USB_disabled] disable USB Host function\n");
-				re_enable_host = TRY_ENABLE_HOST_STATE;
-				stop_usb_host = TRY_STOP_HOST_STATE;
-				msm_otg_start_host(otg, 0);
-			}
 		}
 		break;
 	case OTG_STATE_A_SUSPEND:
@@ -2670,13 +2622,6 @@ static void msm_otg_sm_work(struct work_struct *w)
 			if (TA_WAIT_BCON > 0)
 				msm_otg_start_timer(motg, TA_WAIT_BCON,
 					A_WAIT_BCON);
-
-			if (!USB_disabled && re_enable_host == TRY_ENABLE_HOST_STATE) {
-				USBH_INFO("[USB_disabled] re-enable USB Host function\n");
-				re_enable_host = DEFAULT_STATE;
-				stop_usb_host = DEFAULT_STATE;
-				msm_otg_start_host(otg, 1);
-			}
 		} else if (test_bit(ID_A, &motg->inputs)) {
 			msm_hsusb_vbus_power(motg, 0);
 			msm_otg_notify_charger(motg,

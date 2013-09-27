@@ -1031,12 +1031,16 @@ static int pm8921_is_wireless_charger(void)
 }
 #endif
 
+static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
+
 static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.guage_driver = 0,
 	.chg_limit_active_mask = HTC_BATT_CHG_LIMIT_BIT_TALK |
 								HTC_BATT_CHG_LIMIT_BIT_NAVI,
 	.critical_low_voltage_mv = 3100,
-	.critical_alarm_voltage_mv = 3000,
+//	.critical_alarm_voltage_mv = 3000,
+        .critical_alarm_vol_ptr = critical_alarm_voltage_mv,
+        .critical_alarm_vol_cols = sizeof(critical_alarm_voltage_mv) / sizeof(int),
 	.overload_vol_thr_mv = 4000,
 	.overload_curr_thr_ma = 0,
 
@@ -1062,7 +1066,8 @@ static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.icharger.is_ovp = pm8921_is_charger_ovp,
 	.icharger.is_batt_temp_fault_disable_chg =
 						pm8921_is_batt_temp_fault_disable_chg,
-	.icharger.is_vbus_unstable = pm8921_is_vbus_unstable,
+	//.icharger.is_vbus_unstable = pm8921_is_vbus_unstable,
+	.icharger.is_under_rating = pm8921_is_pwrsrc_under_rating,
 	.icharger.charger_change_notifier_register =
 						cable_detect_register_notifier,
 	.icharger.dump_all = pm8921_dump_all,
