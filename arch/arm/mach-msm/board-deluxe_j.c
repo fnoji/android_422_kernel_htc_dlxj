@@ -1001,8 +1001,8 @@ static void __init deluxe_j_reserve(void)
 static void __init place_movable_zone(void)
 {
 #ifdef CONFIG_ENABLE_DMM
-	movable_reserved_start = monarudo_reserve_info.low_unstable_address;
-	movable_reserved_size = monarudo_reserve_info.max_unstable_size;
+	movable_reserved_start = deluxe_j_reserve_info.low_unstable_address;
+	movable_reserved_size = deluxe_j_reserve_info.max_unstable_size;
 	pr_info("movable zone start %lx size %lx\n",
 		movable_reserved_start, movable_reserved_size);
 #endif
