@@ -213,6 +213,7 @@ struct msm_hsic_hcd {
 	int                     reset_again;
 
 	struct pm_qos_request pm_qos_req_dma;
+	struct task_struct	*resume_thread;
 	
 	struct pm_qos_request pm_qos_req_dma_htc;
 	
@@ -1169,7 +1170,7 @@ static int msm_hsic_suspend(struct msm_hsic_hcd *mehci)
 	msm_hsic_suspend_timestamp = 0;
 	
 
-	// dev_info(mehci->dev, "HSIC-USB in low power mode\n");
+	dev_info(mehci->dev, "HSIC-USB in low power mode\n");
 
 	return 0;
 }
@@ -1281,7 +1282,7 @@ skip_phy_resume:
 	spin_unlock_irqrestore(&mehci->wakeup_lock, flags);
 	
 
-	// dev_info(mehci->dev, "HSIC-USB exited from low power mode\n");
+	dev_info(mehci->dev, "HSIC-USB exited from low power mode\n");
 
 	return 0;
 }
@@ -1547,6 +1548,11 @@ static int msm_hsic_resume_thread(void *data)
 	ktime_t now;
 	s64 mdiff;
 
+while (!kthread_should_stop()) {
+	resume_needed = 0;
+	retry_cnt = 0;
+	tight_resume = 0;
+
 	dbg_log_event(NULL, "Resume RH", 0);
 
 	
@@ -1567,7 +1573,8 @@ static int msm_hsic_resume_thread(void *data)
 		spin_unlock_irq(&ehci->lock);
 		mehci->resume_status = -ESHUTDOWN;
 		complete(&mehci->rt_completion);
-		return 0;
+		
+		goto sleep_itself;
 	}
 
 	if (unlikely(ehci->debug)) {
@@ -1671,6 +1678,12 @@ resume_again:
 
 	complete(&mehci->rt_completion);
 
+sleep_itself:
+	__set_current_state(TASK_UNINTERRUPTIBLE);
+	schedule();
+	__set_current_state(TASK_RUNNING);
+	}
+	pr_info("%s Exit!\n", __func__);
 	return 0;
 }
 
@@ -1679,17 +1692,21 @@ static int ehci_hsic_bus_resume(struct usb_hcd *hcd)
 	struct msm_hsic_hcd *mehci = hcd_to_hsic(hcd);
 	struct ehci_hcd 	*ehci = hcd_to_ehci(hcd);
 	u32 		temp;
-	struct task_struct	*resume_thread = NULL;
+	int ret = 0;
+	
 
 	mehci->resume_status = 0;
-	resume_thread = kthread_run(msm_hsic_resume_thread,
-			mehci, "hsic_resume_thread");
+	
+	
+	ret = wake_up_process(mehci->resume_thread);
+
+	#if 0
 	if (IS_ERR(resume_thread)) {
 		pr_err("Error creating resume thread:%lu\n",
 				PTR_ERR(resume_thread));
 		return PTR_ERR(resume_thread);
 	}
-
+	#endif
 	wait_for_completion(&mehci->rt_completion);
 
 	
@@ -2137,7 +2154,6 @@ static int __devinit ehci_hsic_msm_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to create HCD\n");
 		return  -ENOMEM;
 	}
-	hcd_to_bus(hcd)->skip_resume = true;
 
 	hcd_to_bus(hcd)->skip_resume = true;
 
@@ -2285,7 +2301,11 @@ static int __devinit ehci_hsic_msm_probe(struct platform_device *pdev)
 						"scaling client!!\n", __func__);
 		}
 	}
-
+	mehci->resume_thread = kthread_create_on_node(msm_hsic_resume_thread, mehci, -1, "hsic_resume_thread");
+	if (IS_ERR(mehci->resume_thread)) {
+		pr_err("Error creating resume thread:%lu\n",
+				PTR_ERR(mehci->resume_thread));
+	}
 	__mehci = mehci;
 
 	if (pdata && pdata->swfi_latency)
@@ -2324,6 +2344,15 @@ put_hcd:
 	return ret;
 }
 
+#if defined(CONFIG_ARCH_APQ8064) && defined(CONFIG_USB_EHCI_MSM_HSIC)
+extern int mdm_is_in_restart;
+static void dbg_hsic_usage_count_delay_work_fn(struct work_struct *work)
+{
+    panic("msm_hsic_host usage count is not 0 !!!");
+}
+static DECLARE_DELAYED_WORK(dbg_hsic_usage_count_delay_work, dbg_hsic_usage_count_delay_work_fn);
+#endif 
+
 static int __devexit ehci_hsic_msm_remove(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
@@ -2342,6 +2371,7 @@ static int __devexit ehci_hsic_msm_remove(struct platform_device *pdev)
 		free_irq(mehci->wakeup_irq, mehci);
 	}
 
+	kthread_stop(mehci->resume_thread);
 	mehci->bus_vote = false;
 	cancel_work_sync(&mehci->bus_vote_w);
 	cancel_delayed_work_sync(&ehci_gpio_check_wq);
@@ -2376,6 +2406,26 @@ static int __devexit ehci_hsic_msm_remove(struct platform_device *pdev)
 
 	iounmap(hcd->regs);
 	usb_put_hcd(hcd);
+
+	
+	#if defined(CONFIG_ARCH_APQ8064) && defined(CONFIG_USB_EHCI_MSM_HSIC)
+	if (pdev) {
+		int usage_count = atomic_read(&(pdev->dev.power.usage_count));
+		dev_info(&(pdev->dev), "%s[%d] usage_count is [%d] msm_hsic_host_dev:0x%p &pdev->dev:0x%p mdm_is_in_restart:%d\n",
+			__func__, __LINE__, usage_count, msm_hsic_host_dev, &(pdev->dev), mdm_is_in_restart);
+
+		if (mdm_is_in_restart && usage_count != 0) {
+			pr_info("%s[%d] !!! usage_count:%d is not 0 !!!\n", __func__, __LINE__, usage_count);
+			atomic_set(&(pdev->dev.power.usage_count), 0);
+
+			if (get_radio_flag() & RADIO_FLAG_USB_UPLOAD) {
+				
+				schedule_delayed_work_on(0, &dbg_hsic_usage_count_delay_work, msecs_to_jiffies(300000));
+			}
+		}
+	}
+	#endif
+	
 
 	return 0;
 }
@@ -2413,15 +2463,6 @@ static int msm_hsic_pm_resume(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		disable_irq_wake(hcd->irq);
-	/*
-   	* Keep HSIC in Low Power Mode if system is resumed
-   	* by any other wakeup source.  HSIC is resumed later
-   	* when remote wakeup is received or interface driver
-   	* start I/O.
-   	*/
-	  if (!atomic_read(&mehci->pm_usage_cnt) &&
-                       pm_runtime_suspended(dev))
-          return 0;
 
 	if (hcd_to_bus(hcd)->skip_resume)
 	{
