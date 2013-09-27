@@ -203,7 +203,7 @@ static int msm8960_mi2s_hw_params(struct snd_pcm_substream *substream,
 	int bit_clk_set = 0;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		bit_clk_set = 12288000/(rate * 2 * 24);
+		bit_clk_set = 18432000/(rate * 2 * 24);
 		clk_set_rate(mi2s_rx_bit_clk, bit_clk_set);
 	}
 	return 1;
@@ -277,7 +277,7 @@ static int msm8960_mi2s_startup(struct snd_pcm_substream *substream)
 		configure_mi2s_rx_gpio();
 		mi2s_rx_osr_clk = clk_get(cpu_dai->dev, "osr_clk");
 		if (mi2s_rx_osr_clk) {
-			clk_set_rate(mi2s_rx_osr_clk, 12288000);
+			clk_set_rate(mi2s_rx_osr_clk, 18432000);
 			clk_prepare_enable(mi2s_rx_osr_clk);
 		}
 		mi2s_rx_bit_clk = clk_get(cpu_dai->dev, "bit_clk");
@@ -327,7 +327,7 @@ static int msm8960_i2s_hw_params(struct snd_pcm_substream *substream,
 	int bit_clk_set = 0;
 
 	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
-		bit_clk_set = 12288000/(rate * 2 * 24);
+		bit_clk_set = 12288000/(rate * 2 * 16);
 		pr_info("%s, bit clock is %d\n", __func__, bit_clk_set);
 		clk_set_rate(pri_i2s_rx_bit_clk, bit_clk_set);
 	}
