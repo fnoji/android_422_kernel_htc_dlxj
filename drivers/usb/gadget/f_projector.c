@@ -77,7 +77,7 @@ unsigned short *test_frame;
 #define htc_mode_info(fmt, args...) \
 	printk(KERN_INFO "[htc_mode] " pr_fmt(fmt), ## args)
 
-static int keypad_code[] = {KEY_WAKEUP, 0, 0, 0, KEY_HOME, KEY_MENU, KEY_BACK};
+static int keypad_code[] = {KEY_WAKEUP, 0, 0, 0, KEY_HOME, 0, KEY_BACK};
 static const char cand_shortname[] = "htc_cand";
 static const char htcmode_shortname[] = "htcmode";
 static ktime_t start;
@@ -427,7 +427,7 @@ static void projector_report_key_event(struct projector_dev *dev,
 	input_sync(kdev);
 }
 
-char *get_fb_addr(void) { return NULL; }
+extern char *get_fb_addr(void);
 
 static void send_fb(struct projector_dev *dev)
 {
@@ -1090,14 +1090,12 @@ static int projector_keypad_init(struct projector_dev *dev)
 	set_bit(KEY_VOLUMEDOWN, kdev->keybit);
 	set_bit(KEY_VOLUMEUP, kdev->keybit);
 	set_bit(KEY_HOME, kdev->keybit);
-	set_bit(KEY_MENU, kdev->keybit);
 	set_bit(KEY_BACK, kdev->keybit);
 	set_bit(KEY_SEARCH, kdev->keybit);
 	set_bit(KEY_ENTER, kdev->keybit);
 	set_bit(KEY_DELETE, kdev->keybit);
 	set_bit(KEY_ZOOMIN, kdev->keybit);
 	set_bit(KEY_ZOOMOUT, kdev->keybit);
-	set_bit(KEY_APP_SWITCH, kdev->keybit);
 
 	set_bit(KEY_WAKEUP, kdev->keybit);
 
