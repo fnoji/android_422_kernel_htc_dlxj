@@ -26,7 +26,10 @@
 
 
 struct delayed_work smb_state_check_task;
-#define SMB_STATE_UPDATE_PERIOD_MS			(1 * 60 * 1000)
+#define SMB_STATE_UPDATE_PERIOD_SEC			60
+
+struct delayed_work smb_delay_phase2_check_task;
+#define SMB_DELAY_PHASE2_PERIOD_SEC			5
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static struct early_suspend early_suspend;
@@ -48,17 +51,33 @@ static int smb_state_curr  =  STATE_HI_V_SCRN_OFF;
 static int pwrsrc_disabled; 
 static int batt_chg_disabled; 
 
-#define SMB_AICL_DELAY_CHECK	1
-#ifdef SMB_AICL_DELAY_CHECK
 struct delayed_work		aicl_check_work;
-#define AICL_CHECK_PERIOD_MS	(2000)
+#define AICL_CHECK_PERIOD_STAGE1_1S		1
+#define AICL_CHECK_PERIOD_STAGE2_2S		2
 static int aicl_worker_ongoing;
-#endif
+static int aicl_latest_result = 0;
+
+static int aicl_sm;
+#define AICL_SM_0_RESET				0
+#define AICL_SM_1_USB_IN			1
+#define AICL_SM_1ST_AC_IN				2
+#define AICL_SM_1ST_AICL_PROCESSING		3
+#define AICL_SM_1ST_AICL_DONE			4
+#define AICL_SM_2ST_AICL_PREPARE		5
+#define AICL_SM_2ST_AICL_PROCESSING		6
+#define AICL_SM_2ST_AICL_DONE			7
+
+
+#define SMB_ADAPTER_UNKNOWN			0
+#define SMB_ADAPTER_USB			1
+#define SMB_ADAPTER_UNDER_1A			2
+#define SMB_ADAPTER_1A				3
+#define SMB_ADAPTER_KDDI			4
 
 #define SMB_PWRSRC_DISABLED_BIT_EOC		(1)
 #define SMB_PWRSRC_DISABLED_BIT_KDRV		(1<<1)
 #define SMB_PWRSRC_DISABLED_BIT_FILENODE	(1<<2)
-#define SMB_PWRSRC_DISABLED_BIT_AICL	(1<<3)
+#define SMB_PWRSRC_DISABLED_BIT_AICL		(1<<3)
 #define SMB_PWRSRC_DISABLED_BIT_OTG_ENABLE	(1<<4)
 
 
@@ -78,10 +97,12 @@ static int _smb349_enable_otg_output(int enable);
 
 struct mutex charger_lock;
 struct mutex pwrsrc_lock;
+struct mutex aicl_sm_lock;
+struct mutex phase_lock;
 
 static int smb_chip_rev;
 static int is_otg_enable;
-static int is_kddi_adapter;
+static int smb_adapter_type;
 static int aicl_on;
 static int aicl_result_threshold;
 static int dc_input_max;
@@ -117,17 +138,14 @@ extern int pm8921_bms_charging_began(void);
 
 #define SMB349_MASK(BITS, POS)  ((unsigned char)(((1 << BITS) - 1) << POS))
 
-unsigned int smb349_charging_src_old = 0;
-unsigned int smb349_charging_src_new = 0;
-int target_max_voltage_mv = 0;
+static unsigned int smb349_charging_src_old = 0;
+static unsigned int smb349_charging_src_new = 0;
+static int target_max_voltage_mv = 0;
 
 static struct workqueue_struct *smb349_wq;
+static struct work_struct smb349_state_work;
+static int smb349_state_int;
 
-
-#define AICL_IDX_MAX 	20
-static int aicl_result_buf[AICL_IDX_MAX];
-static int dbg_index = 0;
-static int chg_stat_int;
 struct smb349_chg_int_data {
 	int gpio_chg_int;
 	int smb349_reg;
@@ -143,8 +161,6 @@ static int smb349_initial = -1;
 #ifdef CONFIG_SUPPORT_DQ_BATTERY
 static int htc_is_dq_pass;
 #endif
-
-u8 batt_charging_state;
 
 
 static int smb349_probe(struct i2c_client *client,
@@ -464,7 +480,7 @@ static int get_fastchg_curr_def(int targ_ma_curr)
 static void smb349_adjust_kddi_dc_input_curr(void)
 {
 
-	if(is_kddi_adapter)
+	if(smb_adapter_type == SMB_ADAPTER_KDDI)
 	{
 		if(screen_state)
 		{
@@ -537,7 +553,6 @@ int smb349_get_irq_status(u8 reg, unsigned int flag)
 	if (smb349_initial < 0)
 		return smb349_initial;
 
-	pr_smb_info("%s \n", __func__);
 
 	smb349_i2c_read_byte(&temp,  reg);
 
@@ -641,7 +656,6 @@ int smb349_is_hc_mode(void)
 }
 
 
-
 int smb349_is_suspend_mode(void)
 {
 	int ret = 0;
@@ -669,6 +683,27 @@ int smb349_is_suspend_mode(void)
 		return -1;
 }
 
+static void smb349_state_work_func(struct work_struct *work)
+{
+
+	int smb_ovp_result;
+
+	smb349_is_charger_overvoltage(&smb_ovp_result);
+
+	htc_gauge_set_chg_ovp(smb_ovp_result);
+
+	pr_smb_info("%s, smb_ovp_result: %d\n", __func__, smb_ovp_result);
+	return;
+}
+
+static irqreturn_t smb349_state_handler(int irq, void *data)
+{
+	pr_smb_info("%s\n", __func__);
+
+	queue_work(smb349_wq, &smb349_state_work);
+
+	return IRQ_HANDLED;
+}
 
 int smb349_get_charging_enabled(int *result)
 {
@@ -762,11 +797,6 @@ int smb349_get_AICL_result(void)
 			break;
 
 	}
-
-
-	dbg_index++;
-	aicl_result_buf[dbg_index] = temp;
-	if(dbg_index == AICL_IDX_MAX)	 dbg_index = 0;
 
 	return temp;
 
@@ -1064,28 +1094,6 @@ int smb349_get_charging_stage(void)
 	temp = temp & SMB349_MASK(2, 1);
 	temp = temp >> 1;
 
-	switch (temp)
-	{
-		case SMB349_NO_CHARGING:
-			pr_smb_info("%s, NO_CHARGING\n", __func__);
-			break;
-
-		case SMB349_PRE_CHARGING:
-			pr_smb_info("%s, PRE_CHARGING\n", __func__);
-			break;
-
-		case SMB349_FAST_CHARGING:
-			pr_smb_info("%s, FAST_CHARGING\n", __func__);
-			break;
-
-		case SMB349_TAPER_CHARGING:
-			pr_smb_info("%s, TAPER_CHARGING\n", __func__);
-			break;
-
-		default:
-			break;
-	}
-
 
 	return temp;
 
@@ -1317,7 +1325,7 @@ static int smb349_update_state(void)
 
 int smb349_dump_all(void)
 {
-	pr_smb_info("%s\n", __func__);
+	pr_smb_info("%s, %s %s\n", __func__, __DATE__, __TIME__);
 
 	if (smb349_initial < 0)
 		return smb349_initial;
@@ -1757,6 +1765,8 @@ static int _smb349_set_dc_input_curr_limit(int dc_current_limit)
 	return ret;
 }
 
+#if 0
+
 int smb349_get_switch_freq(void)
 {
 	int ret = 0;
@@ -1819,6 +1829,8 @@ static int smb349_set_switch_freq(int target_freq)
 	return ret;
 }
 
+#endif
+
 
 int smb349_set_i2c_charger_ctrl_active_low(void)
 {
@@ -1876,52 +1888,42 @@ int smb349_get_float_voltage(void)
 	switch (temp)
 	{
 		case SMB349_FLOAT_VOL_4200_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4200_MV\n", __func__);
 			ret = 4200;
 			break;
 
 		case SMB349_FLOAT_VOL_4220_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4220_MV\n", __func__);
 			ret = 4220;
 			break;
 
 		case SMB349_FLOAT_VOL_4240_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4240_MV\n", __func__);
 			ret = 4240;
 			break;
 
 		case SMB349_FLOAT_VOL_4260_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4260_MV\n", __func__);
 			ret = 4260;
 			break;
 
 		case SMB349_FLOAT_VOL_4280_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4280_MV\n", __func__);
 			ret = 4280;
 			break;
 
 		case SMB349_FLOAT_VOL_4300_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4300_MV\n", __func__);
 			ret = 4300;
 			break;
 
 		case SMB349_FLOAT_VOL_4320_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4320_MV\n", __func__);
 			ret = 4320;
 			break;
 
 		case SMB349_FLOAT_VOL_4340_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4340_MV\n", __func__);
 			ret = 4340;
 			break;
 
 		case SMB349_FLOAT_VOL_4350_MV:
-			pr_smb_info("%s, SMB349_FLOAT_VOL_4350_MV\n", __func__);
 			ret = 4350;
 			break;
 
 		default:
-			pr_smb_err("%s, no matching float voltage\n", __func__);
 			break;
 			}
 
@@ -1938,6 +1940,13 @@ int _smb349_set_float_voltage(unsigned int fv)
 {
 	int ret = 0;
 	pr_smb_info("%s	fv:0x%x\n", __func__, fv);
+
+
+	if(smb349_is_usbcs_register_mode())
+	{
+		pr_smb_info("sff %s, error due to USBCS = 1\n",	__func__);
+		return EIO;
+	}
 
 	ret = smb349_masked_write(FLOAT_VOLTAGE_REG, FLOAT_VOLTAGE_MASK, fv);
 	if(ret)
@@ -1974,7 +1983,7 @@ int smb349_set_to_usb5(void)
 int smb349_set_hc_mode(unsigned int enable)
 {
 	int ret = 0;
-	pr_smb_info("%s\n", __func__);
+	pr_smb_info("%s enable: %d\n", __func__, enable);
 
 	if(enable)
 	{
@@ -2015,6 +2024,7 @@ int smb349_set_AICL_mode(unsigned int enable)
 
 int smb349_get_charging_src_reg(void)
 {
+    pr_smb_info("%s  smb349_charging_src_new: %d\n", __func__, smb349_charging_src_new);
 	return smb349_charging_src_new;
 }
 
@@ -2023,26 +2033,27 @@ int smb349_get_i2c_slave_id(void)
 	return smb349_dump_reg(I2C_BUS_REG);
 }
 
-void smb349_dump_aicl_result(void)
-{
-	int i=0;
-
-	
-	for(i=0; i < AICL_IDX_MAX; i++)
-		pr_smb_info("\t 0x%x\n", aicl_result_buf[i]);
-
-	pr_smb_info("\t dbg_index: %d", dbg_index);
-
-}
-
 void smb349_partial_reg_dump(void)
 {
-	int result = 0;
-	pr_smb_info("%s\n", __func__);
-	
+	int chg_enable = 0;
+	int is_susp = 0;
+	int is_hc_mode = 0;
+	int is_usbcs = 0;
+	int chg_stage = 0;
+	int chg_src_reg = 0;
+	int chg_err = 0;
+	int dc_input_curr = 0;
+	int float_vol = 0;
+	int fastchg_curr = 0;
+	int aicl_result = 0;
+	int power_ok = 0;
+	int aicl_enable = 0;
+	int aicl_complete = 0;
+
+#if 0
 	pr_smb_info("smb349_is_pwrsrc_suspend: %d \n", smb349_is_suspend_mode());
-	smb349_is_charging_enabled(&result);
-	pr_smb_info("smb349_is_charging_enabled: %d \n", result);
+	smb349_is_charging_enabled(&chg_enable);
+	pr_smb_info("smb349_is_charging_enabled: %d \n", chg_enable);
 	pr_smb_info("smb349_is_hc_mode: %d \n", smb349_is_hc_mode());
 	pr_smb_info("smb349_is_usbcs_register_mode: %d \n",	smb349_is_usbcs_register_mode());
 	smb349_get_charging_stage();
@@ -2056,8 +2067,45 @@ void smb349_partial_reg_dump(void)
 	pr_smb_info("smb349_is_power_ok: %d \n", smb349_is_power_ok());
 	pr_smb_info("smb349_is_AICL_enabled: %d \n", 	smb349_is_AICL_enabled());
 	pr_smb_info("smb349_is_AICL_complete: %d \n", smb349_is_AICL_complete());
+#endif
 
-	pr_smb_info("smb_pwrsrc_disabled: 0x%x,smb_batt_charging_disabled: 0x%x \n", smb_pwrsrc_disabled, smb_batt_charging_disabled);
+	is_susp = smb349_is_suspend_mode();
+	smb349_is_charging_enabled(&chg_enable);
+	is_hc_mode = smb349_is_hc_mode();
+	is_usbcs = smb349_is_usbcs_register_mode();
+	chg_stage = smb349_get_charging_stage();
+	chg_src_reg = smb349_get_charging_src_reg();
+	chg_err = smb349_is_charger_error();
+	dc_input_curr = smb349_get_dc_input_curr_limit();
+	float_vol = smb349_get_float_voltage();
+	fastchg_curr = smb_get_fastchg_curr();
+	aicl_result = smb349_get_AICL_result();
+	power_ok = smb349_is_power_ok();
+	aicl_enable = smb349_is_AICL_enabled();
+	aicl_complete = smb349_is_AICL_complete();
+
+	 pr_smb_info("is_susp=%d,chg_enable=%d,is_hc_mode=%d,is_usbcs=%d,chg_stage=%d,chg_src_reg=%d,"
+		 " chg_err=%d,dc_input_curr=%d,float_vol=%d\n",
+			is_susp,
+			chg_enable,
+			is_hc_mode,
+			is_usbcs,
+			chg_stage,
+			chg_src_reg,
+			chg_err,
+			dc_input_curr,
+			float_vol);
+
+	 pr_smb_info("fastchg_curr=%d,aicl_result=%d,power_ok=%d,"
+		 "  aicl_enable=%d,aicl_complete=%d,pwrsrc_disabled=0x%x,batt_charging_disabled=0x%x\n",
+			fastchg_curr,
+			aicl_result,
+			power_ok,
+			aicl_enable,
+			aicl_complete,
+			smb_pwrsrc_disabled,
+			smb_batt_charging_disabled);
+
 
 }
 
@@ -2220,7 +2268,6 @@ int smb349_charger_get_attr_text(char *buf, int size)
 	int val = 0;
 	const int verbose = 0;
 
-	pr_smb_info("%s ++, size: %d\n", __func__, size);
 
 	if (smb349_initial < 0)
 		return smb349_initial;
@@ -2232,7 +2279,6 @@ int smb349_charger_get_attr_text(char *buf, int size)
 	else
 		len += scnprintf(buf + len, size - len, " SMB340 ---------------------\n");
 
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
 
 	len += scnprintf(buf + len, size - len,
 			"CHG_CUR_REG(0x%x):  0x%x;\n"
@@ -2278,7 +2324,6 @@ int smb349_charger_get_attr_text(char *buf, int size)
 	val = smb349_dump_reg_verbose(SYSOK_REG, verbose);
 	len += scnprintf(buf + len, size - len, "SYSOK_REG(0x%x):  0x%x;\n", SYSOK_REG, val);
 
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
 
 	val = smb349_dump_reg_verbose(AUTO_INPUT_VOL_DET_REG, verbose);
 	len += scnprintf(buf + len, size - len, "AUTOINP_VOLDET_REG(0x%x):  0x%x;\n", AUTO_INPUT_VOL_DET_REG, val);
@@ -2286,64 +2331,64 @@ int smb349_charger_get_attr_text(char *buf, int size)
 	val = smb349_dump_reg_verbose(I2C_BUS_REG, verbose);
 	len += scnprintf(buf + len, size - len, "I2C_BUS_REG(0x%x):  0x%x;\n", I2C_BUS_REG, val);
 
-	val = smb349_dump_reg_verbose(CMD_A_REG, verbose);
-	len += scnprintf(buf + len, size - len, "CMD_A_REG(0x%x):  0x%x;\n", CMD_A_REG, val);
-
-	val = smb349_dump_reg_verbose(CMD_B_REG, verbose);
-	len += scnprintf(buf + len, size - len, "CMD_B_REG(0x%x):  0x%x;\n", CMD_B_REG, val);
-
-	val = smb349_dump_reg_verbose(CMD_C_REG, verbose);
-	len += scnprintf(buf + len, size - len, "CMD_C_REG(0x%x):  0x%x;\n", CMD_C_REG, val);
-
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
-
-	val = smb349_dump_reg_verbose(IRQ_A_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_A_REG(0x%x):  0x%x;\n", IRQ_A_REG, val);
-
-	val = smb349_dump_reg_verbose(IRQ_B_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_B_REG(0x%x):  0x%x;\n", IRQ_B_REG, val);
-
-	val = smb349_dump_reg_verbose(IRQ_C_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_C_REG(0x%x):  0x%x;\n", IRQ_C_REG, val);
-
-	val = smb349_dump_reg_verbose(IRQ_D_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_D_REG(0x%x):  0x%x;\n", IRQ_D_REG, val);
-
-	val = smb349_dump_reg_verbose(IRQ_E_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_E_REG(0x%x):  0x%x;\n", IRQ_E_REG, val);
-
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
-
-	val = smb349_dump_reg_verbose(IRQ_F_REG, verbose);
-	len += scnprintf(buf + len, size - len, "IRQ_F_REG(0x%x):  0x%x;\n", IRQ_F_REG, val);
-
-	val = smb349_dump_reg_verbose(STATUS_A_REG, verbose);
-	len += scnprintf(buf + len, size - len, "STATUS_A_REG(0x%x):  0x%x;\n", STATUS_A_REG, val);
-
-	val = smb349_dump_reg_verbose(STATUS_B_REG, verbose);
-	len += scnprintf(buf + len, size - len, "STATUS_B_REG(0x%x):  0x%x;\n", STATUS_B_REG, val);
-
-	val = smb349_dump_reg_verbose(STATUS_C_REG, verbose);
-	len += scnprintf(buf + len, size - len, "STATUS_C_REG(0x%x):  0x%x;\n", STATUS_C_REG, val);
-
-	val = smb349_dump_reg_verbose(STATUS_D_REG, verbose);
-	len += scnprintf(buf + len, size - len, "STATUS_D_REG(0x%x):  0x%x;\n", STATUS_D_REG, val);
-
-	val = smb349_dump_reg_verbose(STATUS_E_REG, verbose);
-	len += scnprintf(buf + len, size - len, "STATUS_E_REG(0x%x):  0x%x;\n", STATUS_E_REG, val);
-
-
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
-
 	len += scnprintf(buf + len, size - len, "pwrsrc_disabled_reason: 0x%x;\n",  smb_pwrsrc_disabled);
 	len += scnprintf(buf + len, size - len, "charging_disabled_reason: 0x%x;\n",  smb_batt_charging_disabled);
+
 	smb349_is_charging_enabled(&val);
 	len += scnprintf(buf + len, size - len, "is_charging_enabled: %d;\n",  val);
+
+	smb349_is_charger_overvoltage(&val);
+	len += scnprintf(buf + len, size - len, "is_charger_overvoltage: %d;\n",  val);
+
+	len += scnprintf(buf + len, size - len, "is_power_ok: %d;\n", smb349_is_power_ok());
 	len += scnprintf(buf + len, size - len, "is_hc_mode: %d;\n",  smb349_is_hc_mode());
 	len += scnprintf(buf + len, size - len, "is_usbcs_register_mode: %d;\n",  smb349_is_usbcs_register_mode());
 	len += scnprintf(buf + len, size - len, "charging_stage: %d;\n",  smb349_get_charging_stage());
+	len += scnprintf(buf + len, size - len, "charging_src_reg: %d;\n",  smb349_get_charging_src_reg());
 	len += scnprintf(buf + len, size - len, "is_charger_error: %d;\n",  smb349_is_charger_error());
 
+
+	len += scnprintf(buf + len, size - len, "smb349_get_float_voltage:");
+
+	switch (smb349_get_float_voltage())
+	{
+		case 0:
+			len += scnprintf(buf + len, size - len, "  not getting correct target_max_voltage_mv yet\n");
+			break;
+		case 4000:
+			len += scnprintf(buf + len, size - len, " 4000_MV;\n");
+			break;
+		case 4200:
+			len += scnprintf(buf + len, size - len, " 4200_MV;\n");
+			break;
+		case 4220:
+			len += scnprintf(buf + len, size - len, " 4220_MV;\n");
+			break;
+		case 4240:
+			len += scnprintf(buf + len, size - len, " 4240_MV;\n");
+			break;
+		case 4260:
+			len += scnprintf(buf + len, size - len, " 4260_MV;\n");
+			break;
+		case 4280:
+			len += scnprintf(buf + len, size - len, " 4280_MV;\n");
+			break;
+		case 4300:
+			len += scnprintf(buf + len, size - len, " 4300_MV;\n");
+			break;
+		case 4320:
+			len += scnprintf(buf + len, size - len, " 4320_MV;\n");
+			break;
+		case 4340:
+			len += scnprintf(buf + len, size - len, " 4340_MV;\n");
+			break;
+		case 4350:
+			len += scnprintf(buf + len, size - len, " 4350_MV;\n");
+			break;
+		default:
+			len += scnprintf(buf + len, size - len, " error, no valid value is read;\n");
+			break;
+	}
 
 
 	len += scnprintf(buf + len, size - len, "fast_charge_curr:");
@@ -2477,8 +2522,174 @@ int smb349_charger_get_attr_text(char *buf, int size)
 	}
 
 
-	len += scnprintf(buf + len, size - len, "AICL_result: %d;\n", smb349_get_AICL_result());
+	len += scnprintf(buf + len, size - len, "last_AICL_result:");
+	switch (aicl_latest_result)
+	{
+		case AICL_RESULT_500MA:
+			len += scnprintf(buf + len, size - len, " 500MA;\n");
+			break;
+		case AICL_RESULT_900MA:
+			len += scnprintf(buf + len, size - len, " 900MA;\n");
+			break;
+		case AICL_RESULT_1000MA:
+			len += scnprintf(buf + len, size - len, " 1000MA;\n");
+			break;
+		case AICL_RESULT_1100MA:
+			len += scnprintf(buf + len, size - len, " 1100MA;\n");
+			break;
+		case AICL_RESULT_1200MA:
+			len += scnprintf(buf + len, size - len, " 1200MA;\n");
+			break;
+		case AICL_RESULT_1300MA:
+			len += scnprintf(buf + len, size - len, " 1300MA;\n");
+			break;
+		case AICL_RESULT_1500MA:
+			len += scnprintf(buf + len, size - len, " 1500MA;\n");
+			break;
+		case AICL_RESULT_1600MA:
+			len += scnprintf(buf + len, size - len, " 1600MA;\n");
+			break;
+		case AICL_RESULT_1700MA:
+			len += scnprintf(buf + len, size - len, " 1700MA;\n");
+			break;
+		case AICL_RESULT_1800MA:
+			len += scnprintf(buf + len, size - len, " 1800MA;\n");
+			break;
+		case AICL_RESULT_2000MA:
+			len += scnprintf(buf + len, size - len, " 2000MA;\n");
+			break;
+		case AICL_RESULT_2200MA:
+			len += scnprintf(buf + len, size - len, " 2200MA;\n");
+			break;
+		case AICL_RESULT_2400MA:
+			len += scnprintf(buf + len, size - len, " 2400MA;\n");
+			break;
+		case AICL_RESULT_2500MA:
+			len += scnprintf(buf + len, size - len, " 2500MA;\n");
+			break;
+		case AICL_RESULT_3000MA:
+			len += scnprintf(buf + len, size - len, " 3000MA;\n");
+			break;
+		case AICL_RESULT_3500MA:
+			len += scnprintf(buf + len, size - len, " 3500MA;\n");
+			break;
+		default:
+			len += scnprintf(buf + len, size - len, " unknown;\n");
+			break;
 
+	}
+	len += scnprintf(buf + len, size - len, "current_AICL_result:");
+	switch (smb349_get_AICL_result())
+	{
+		case AICL_RESULT_500MA:
+			len += scnprintf(buf + len, size - len, " 500MA;\n");
+			break;
+		case AICL_RESULT_900MA:
+			len += scnprintf(buf + len, size - len, " 900MA;\n");
+			break;
+		case AICL_RESULT_1000MA:
+			len += scnprintf(buf + len, size - len, " 1000MA;\n");
+			break;
+		case AICL_RESULT_1100MA:
+			len += scnprintf(buf + len, size - len, " 1100MA;\n");
+			break;
+		case AICL_RESULT_1200MA:
+			len += scnprintf(buf + len, size - len, " 1200MA;\n");
+			break;
+		case AICL_RESULT_1300MA:
+			len += scnprintf(buf + len, size - len, " 1300MA;\n");
+			break;
+		case AICL_RESULT_1500MA:
+			len += scnprintf(buf + len, size - len, " 1500MA;\n");
+			break;
+		case AICL_RESULT_1600MA:
+			len += scnprintf(buf + len, size - len, " 1600MA;\n");
+			break;
+		case AICL_RESULT_1700MA:
+			len += scnprintf(buf + len, size - len, " 1700MA;\n");
+			break;
+		case AICL_RESULT_1800MA:
+			len += scnprintf(buf + len, size - len, " 1800MA;\n");
+			break;
+		case AICL_RESULT_2000MA:
+			len += scnprintf(buf + len, size - len, " 2000MA;\n");
+			break;
+		case AICL_RESULT_2200MA:
+			len += scnprintf(buf + len, size - len, " 2200MA;\n");
+			break;
+		case AICL_RESULT_2400MA:
+			len += scnprintf(buf + len, size - len, " 2400MA;\n");
+			break;
+		case AICL_RESULT_2500MA:
+			len += scnprintf(buf + len, size - len, " 2500MA;\n");
+			break;
+		case AICL_RESULT_3000MA:
+			len += scnprintf(buf + len, size - len, " 3000MA;\n");
+			break;
+		case AICL_RESULT_3500MA:
+			len += scnprintf(buf + len, size - len, " 3500MA;\n");
+			break;
+		default:
+			len += scnprintf(buf + len, size - len, " unknown;\n");
+			break;
+
+	}
+
+	len += scnprintf(buf + len, size - len, "is_AICL_enabled: %d;\n", smb349_is_AICL_enabled());
+	len += scnprintf(buf + len, size - len, "is_AICL_complete: %d;\n",  smb349_is_AICL_complete());
+	len += scnprintf(buf + len, size - len, "smb_adapter_type:");
+	switch (smb_adapter_type)
+	{
+		case SMB_ADAPTER_UNKNOWN:
+			len += scnprintf(buf + len, size - len, " UNKNOWN;\n");
+			break;
+		case SMB_ADAPTER_UNDER_1A:
+			len += scnprintf(buf + len, size - len, " UNDER_1A;\n");
+			break;
+		case SMB_ADAPTER_1A:
+			len += scnprintf(buf + len, size - len, " 1A;\n");
+			break;
+		case SMB_ADAPTER_KDDI:
+			len += scnprintf(buf + len, size - len, " KDDI;\n");
+			break;
+		default:
+			break;
+	}
+
+	len += scnprintf(buf + len, size - len, "aicl_sm:");
+
+	switch (aicl_sm)
+	{
+		case AICL_SM_0_RESET:
+			len += scnprintf(buf + len, size - len, " 0_RESET;\n");
+			break;
+		case AICL_SM_1ST_AICL_DONE	:
+			len += scnprintf(buf + len, size - len, " 1ST_AICL_DONE;\n");
+			break;
+		case AICL_SM_1ST_AICL_PROCESSING:
+			len += scnprintf(buf + len, size - len, " 1ST_AICL_PROCESSING;\n");
+			break;
+		case AICL_SM_1ST_AC_IN:
+			len += scnprintf(buf + len, size - len, " 1_AC_IN;\n");
+			break;
+		case AICL_SM_1_USB_IN:
+			len += scnprintf(buf + len, size - len, " USB_IN;\n");
+			break;
+		case AICL_SM_2ST_AICL_PREPARE:
+			len += scnprintf(buf + len, size - len, " 2ST_AICL_PREPARE;\n");
+			break;
+		case AICL_SM_2ST_AICL_PROCESSING:
+			len += scnprintf(buf + len, size - len, " 2ST_AICL_PROCESSING;\n");
+			break;
+		case AICL_SM_2ST_AICL_DONE:
+			len += scnprintf(buf + len, size - len, " 2ST_AICL_DONE;\n");
+			break;
+		default:
+			break;
+	}
+
+#if 0
+	
 	len += scnprintf(buf + len, size - len, "switch_freq:");
 	switch (smb349_get_switch_freq())
 	{
@@ -2491,14 +2702,55 @@ int smb349_charger_get_attr_text(char *buf, int size)
 		default:
 			break;
 	}
+#endif
 
-	len += scnprintf(buf + len, size - len, "is_power_ok: %d;\n", smb349_is_power_ok());
-	len += scnprintf(buf + len, size - len, "is_AICL_enabled: %d;\n", smb349_is_AICL_enabled());
-	len += scnprintf(buf + len, size - len, "is_AICL_complete: %d;\n",  smb349_is_AICL_complete());
-	len += scnprintf(buf + len, size - len, "is_kddi_adapter: %d;\n", is_kddi_adapter);
+	val = smb349_dump_reg_verbose(CMD_A_REG, verbose);
+	len += scnprintf(buf + len, size - len, "CMD_A_REG(0x%x):  0x%x;\n", CMD_A_REG, val);
+
+	val = smb349_dump_reg_verbose(CMD_B_REG, verbose);
+	len += scnprintf(buf + len, size - len, "CMD_B_REG(0x%x):  0x%x;\n", CMD_B_REG, val);
+
+	val = smb349_dump_reg_verbose(CMD_C_REG, verbose);
+	len += scnprintf(buf + len, size - len, "CMD_C_REG(0x%x):  0x%x;\n", CMD_C_REG, val);
 
 
-	pr_smb_info("%s , len: %d size: %d\n", __func__, len, size);
+	val = smb349_dump_reg_verbose(IRQ_A_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_A_REG(0x%x):  0x%x;\n", IRQ_A_REG, val);
+
+	val = smb349_dump_reg_verbose(IRQ_B_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_B_REG(0x%x):  0x%x;\n", IRQ_B_REG, val);
+
+	val = smb349_dump_reg_verbose(IRQ_C_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_C_REG(0x%x):  0x%x;\n", IRQ_C_REG, val);
+
+	val = smb349_dump_reg_verbose(IRQ_D_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_D_REG(0x%x):  0x%x;\n", IRQ_D_REG, val);
+
+	val = smb349_dump_reg_verbose(IRQ_E_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_E_REG(0x%x):  0x%x;\n", IRQ_E_REG, val);
+
+
+	val = smb349_dump_reg_verbose(IRQ_F_REG, verbose);
+	len += scnprintf(buf + len, size - len, "IRQ_F_REG(0x%x):  0x%x;\n", IRQ_F_REG, val);
+
+	val = smb349_dump_reg_verbose(STATUS_A_REG, verbose);
+	len += scnprintf(buf + len, size - len, "STATUS_A_REG(0x%x):  0x%x;\n", STATUS_A_REG, val);
+
+	val = smb349_dump_reg_verbose(STATUS_B_REG, verbose);
+	len += scnprintf(buf + len, size - len, "STATUS_B_REG(0x%x):  0x%x;\n", STATUS_B_REG, val);
+
+	val = smb349_dump_reg_verbose(STATUS_C_REG, verbose);
+	len += scnprintf(buf + len, size - len, "STATUS_C_REG(0x%x):  0x%x;\n", STATUS_C_REG, val);
+
+	val = smb349_dump_reg_verbose(STATUS_D_REG, verbose);
+	len += scnprintf(buf + len, size - len, "STATUS_D_REG(0x%x):  0x%x;\n", STATUS_D_REG, val);
+
+	val = smb349_dump_reg_verbose(STATUS_E_REG, verbose);
+	len += scnprintf(buf + len, size - len, "STATUS_E_REG(0x%x):  0x%x;\n", STATUS_E_REG, val);
+
+
+
+
 
 	pr_smb_info("%s --\n", __func__);
 
@@ -2506,9 +2758,115 @@ int smb349_charger_get_attr_text(char *buf, int size)
 }
 
 
-int smb349_config(void)
+static int _smb349_set_aicl_threshold(int dc_current_limit)
+{
+	return _smb349_set_dc_input_curr_limit(dc_current_limit);
+}
+
+static void smb349_create_aicl_worker(int sec)
+{
+
+		
+		cancel_delayed_work_sync(&aicl_check_work);
+
+		aicl_worker_ongoing = 1;
+		pr_smb_info("%s, aicl_worker_ongoing = %d, sec: %d \n", __func__, aicl_worker_ongoing, sec);
+
+		queue_delayed_work(smb349_wq, &aicl_check_work, (HZ * sec));
+}
+
+static void smb349_aicl_phase1(void)
+{
+
+	pr_smb_info("%s	++\n", __func__);
+
+	if(aicl_on)
+	{
+		
+		
+
+		
+		mutex_lock(&aicl_sm_lock);
+		aicl_sm = AICL_SM_1ST_AC_IN;
+		smb_adapter_type = SMB_ADAPTER_UNKNOWN;  
+		mutex_unlock(&aicl_sm_lock);
+		pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
+		pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+
+
+		
+		smb349_set_AICL_mode(1);
+
+		
+		_smb349_set_aicl_threshold(DC_INPUT_1000MA);
+
+		
+		smb349_set_hc_mode(SMB349_USB_MODE);
+
+		
+		smb349_set_hc_mode(SMB349_HC_MODE);
+
+		
+		smb349_create_aicl_worker(AICL_CHECK_PERIOD_STAGE1_1S);
+
+	}
+	else
+		pr_smb_info("%s	fail!! aicl_on: %d, aicl_sm:%d, smb_adapter_type: %d \n",
+		__func__, aicl_on, aicl_sm, smb_adapter_type);
+
+	pr_smb_info("%s	--\n", __func__);
+}
+
+static void smb349_aicl_phase2(void)
+{
+	pr_smb_info("%s	++\n", __func__);
+
+	if((aicl_on) && (aicl_sm == AICL_SM_1ST_AICL_DONE) && (smb_adapter_type == SMB_ADAPTER_1A))
+	{
+		
+		
+		mutex_lock(&aicl_sm_lock);
+		aicl_sm = AICL_SM_2ST_AICL_PREPARE;
+		mutex_unlock(&aicl_sm_lock);
+		pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
+
+
+		
+		smb349_set_AICL_mode(1);
+
+		
+		_smb349_set_aicl_threshold(DC_INPUT_1700MA);
+
+		
+		_smb34x_set_fastchg_curr(get_fastchg_curr_def(MAX_FASTCHG_INPUT_CURR));
+
+		
+		smb349_set_hc_mode(SMB349_USB_MODE);
+
+		
+		smb349_set_hc_mode(SMB349_HC_MODE);
+
+		
+		smb349_create_aicl_worker(AICL_CHECK_PERIOD_STAGE2_2S);
+	}
+	else
+		pr_smb_info("%s	fail !!aicl_on: %d, aicl_sm:%d, smb_adapter_type: %d \n",
+		__func__, aicl_on, aicl_sm, smb_adapter_type);
+
+	pr_smb_info("%s	--\n", __func__);
+}
+
+static	void delay_phase2_check_worker(struct work_struct *work)
 {
 	pr_smb_info("%s \n", __func__);
+	mutex_lock(&phase_lock);
+	smb349_aicl_phase2();
+	mutex_unlock(&phase_lock);
+}
+
+int smb349_config(void)
+{
+	pr_smb_info("%s ++\n", __func__);
 
 	
 	smb349_partial_reg_dump();
@@ -2522,19 +2880,20 @@ int smb349_config(void)
 	
 	smb349_switch_usbcs_mode(SMB349_USBCS_REGISTER_CTRL);
 
-		smb349_set_switch_freq(SWITCH_FREQ_1MHZ);
 
 	if(aicl_on)
 		smb349_set_AICL_mode(1);
 	else
 		smb349_set_AICL_mode(0);
 
+		_smb349_set_aicl_threshold(DC_INPUT_1000MA);
 
 
 
 
 
 
+	pr_smb_info("%s --\n", __func__);
 
 	return 0;
 
@@ -2582,6 +2941,15 @@ static int _smb349_limit_charge_enable(bool enable)
 	return ret;
 }
 
+int smb349_is_batt_charge_enable(void)
+{
+	if(smb_batt_charging_disabled)
+		return 0;
+	else
+		return 1;
+}
+EXPORT_SYMBOL(smb349_is_batt_charge_enable);
+
 
 int smb349_limit_charge_enable(bool enable)
 {
@@ -2605,126 +2973,182 @@ int smb349_limit_charge_enable(bool enable)
 EXPORT_SYMBOL(smb349_limit_charge_enable);
 
 
-
 static void smb_state_check_worker(struct work_struct *w)
 {
 
-	pr_smb_info("%s\n", __func__);
-
-	if(smb349_is_usbcs_register_mode() == SMB349_USBCS_PIN_CTRL)
-	{
-		
-		smb349_config();
-	}
+	pr_smb_info("%s ++\n", __func__);
 
 	if(smb349_is_power_ok())
-		smb349_set_max_charging_vol();
+			smb349_set_max_charging_vol();
 
-	
-	if((smb349_charging_src_new == HTC_PWR_SOURCE_TYPE_AC) ||
-		(smb349_charging_src_new == HTC_PWR_SOURCE_TYPE_9VAC) ||
-		(smb349_charging_src_new == HTC_PWR_SOURCE_TYPE_MHL_AC)
-		)
+	if (smb349_is_usbcs_register_mode() == SMB349_USBCS_PIN_CTRL)
 	{
-		if(smb349_is_AICL_enabled() && (!aicl_worker_ongoing))
+		pr_smb_info("%s need to reconfig register!, aicl_worker_ongoing:%d, aicl_on:%d\n", __func__, aicl_worker_ongoing, aicl_on);
+
+		
+		smb349_config();
+
+		
+		if(smb349_is_power_ok())
+			smb349_set_max_charging_vol();
+
+		
+		smb349_set_i2c_charger_ctrl_active_high();
+
+		pr_smb_info("%s	smb349_charging_src_new: %d\n", __func__, smb349_charging_src_new);
+		switch (smb349_charging_src_new)
 		{
+			case HTC_PWR_SOURCE_TYPE_USB:
+			case HTC_PWR_SOURCE_TYPE_UNKNOWN_USB:
+				mutex_lock(&aicl_sm_lock);
+				aicl_sm = AICL_SM_1_USB_IN;
+				smb_adapter_type = SMB_ADAPTER_USB;
+				mutex_unlock(&aicl_sm_lock);
+				pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
+				pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+				break;
 
-			pr_smb_info("%s need to reconfig register!, aicl_worker_ongoing:%d, aicl_on:%d\n", __func__, aicl_worker_ongoing, aicl_on);
+			case HTC_PWR_SOURCE_TYPE_AC:
+			case HTC_PWR_SOURCE_TYPE_9VAC:
 
-			
-			smb349_config();
+				if(aicl_on)
+				{
+					
+					mutex_lock(&phase_lock);
+					smb349_aicl_phase1();
+					mutex_unlock(&phase_lock);
+				}
+				else
+				{
 
-			
-			smb349_set_i2c_charger_ctrl_active_high();
+					
+					_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
+					
+					_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
 
-			smb349_set_AICL_mode(0);
+				}
+				break;
 
-			
-			if(is_kddi_adapter)
-			{
-				_smb349_set_dc_input_curr_limit(dc_input_max);
-				_smb34x_set_fastchg_curr(get_fastchg_curr_def(MAX_FASTCHG_INPUT_CURR));
-			}
-			else if (smb349_charging_src_new == HTC_PWR_SOURCE_TYPE_AC)
-			{
-				_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
-				_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
-			}
-			else if (smb349_charging_src_new == HTC_PWR_SOURCE_TYPE_MHL_AC)
-			{
-				
-				_smb349_set_dc_input_curr_limit(DC_INPUT_900MA);
-				_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
-			}
+				default:
 
-			
-			smb349_set_hc_mode(SMB349_HC_MODE);
-
-			
-			mutex_lock(&pwrsrc_lock);
-			_smb349_enable_pwrsrc(!smb_pwrsrc_disabled);	
-			mutex_unlock(&pwrsrc_lock);
-
-			
-			mutex_lock(&charger_lock);
-			_smb349_enable_charging(!smb_batt_charging_disabled);	
-			mutex_unlock(&charger_lock);
+					break;
 
 		}
-	}
 
-	if(!aicl_on)
-		smb349_set_AICL_mode(0);
+		
+		mutex_lock(&pwrsrc_lock);
+		_smb349_enable_pwrsrc(!smb_pwrsrc_disabled);	
+		mutex_unlock(&pwrsrc_lock);
+
+		
+		mutex_lock(&charger_lock);
+		_smb349_enable_charging(!smb_batt_charging_disabled);	
+		mutex_unlock(&charger_lock);
+
+	}
 
 	if(smb349_update_state())
 		smb349_adjust_fast_charge_curr();
 
 	
-	schedule_delayed_work(&smb_state_check_task,
-			round_jiffies_relative(msecs_to_jiffies(SMB_STATE_UPDATE_PERIOD_MS)));
+	queue_delayed_work(smb349_wq, &smb_state_check_task, (HZ * SMB_STATE_UPDATE_PERIOD_SEC));
 
+	pr_smb_info("%s --\n", __func__);
 }
 
 
-#ifdef	SMB_AICL_DELAY_CHECK
 static	void aicl_check_worker(struct work_struct *work)
 {
 	int is_hc_mode = 0;
-	int aicl_result = 0;
 	int is_aicl_complete = 0;
+
+	mutex_lock(&phase_lock);
+
 	pr_smb_info("%s	++\n", __func__);
 	is_aicl_complete = smb349_is_AICL_complete();
 	pr_smb_info("smb349_is_AICL_complete: %d \n", is_aicl_complete);
 	is_hc_mode = smb349_is_hc_mode();
 	pr_smb_info("smb349_is_hc_mode:	%d \n",	is_hc_mode);
 
+	mutex_lock(&aicl_sm_lock);
+	if(aicl_sm == AICL_SM_1ST_AC_IN)
+	{
+		aicl_sm =  AICL_SM_1ST_AICL_PROCESSING;
+	}
+	else if(aicl_sm == AICL_SM_2ST_AICL_PREPARE)
+	{
+		aicl_sm = AICL_SM_2ST_AICL_PROCESSING;
+	}
+	else
+	{
+		pr_smb_info("%s	aicl_sm_interleaving !! exit! aicl_sm:%d\n", __func__, aicl_sm);
+		mutex_unlock(&aicl_sm_lock);
+		mutex_unlock(&phase_lock);
+		return;
+	}
+	mutex_unlock(&aicl_sm_lock);
+
+	pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
+
 	if((!is_hc_mode) || (!is_aicl_complete))
 	{
-		pr_smb_info("%s config as regular AC\n", __func__);
+		pr_smb_info("%s config as poor AC\n", __func__);
 
 		smb349_config();
-		_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
+		if(aicl_sm == AICL_SM_1ST_AICL_PROCESSING)
+			_smb349_set_dc_input_curr_limit(DC_INPUT_500MA);
+		if(aicl_sm == AICL_SM_2ST_AICL_PROCESSING)
+			_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
 
 		_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
 
 		smb349_set_hc_mode(SMB349_HC_MODE);
+
+		mutex_lock(&aicl_sm_lock);
+		smb_adapter_type = SMB_ADAPTER_UNDER_1A;
+		mutex_unlock(&aicl_sm_lock);
+		pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+
 	}
 	else {
-		aicl_result = smb349_get_AICL_result();
-		if(aicl_result < aicl_result_threshold)
+		aicl_latest_result = smb349_get_AICL_result();
+		if(aicl_latest_result < aicl_result_threshold)
 		{
-			pr_smb_info("%s config as regular AC\n", __func__);
+			pr_smb_info("%s config as regular AC,aicl_latest_result: %d\n", __func__, aicl_latest_result);
+
+		if(aicl_latest_result < AICL_RESULT_1000MA)
+		{
+			mutex_lock(&aicl_sm_lock);
+			smb_adapter_type = SMB_ADAPTER_UNDER_1A;
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+
+			_smb349_set_dc_input_curr_limit(aicl_latest_result);
+		}
+		else
+		{
+			mutex_lock(&aicl_sm_lock);
+			smb_adapter_type = SMB_ADAPTER_1A;
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+
 			_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
+		}
+
 			if(!is_hc_mode)	smb349_set_hc_mode(SMB349_HC_MODE);
-			is_kddi_adapter = 0;
-			_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
+		_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
 
 		}
 		else
 		{
 			pr_smb_info("%s config as kddi AC\n", __func__);
 			_smb349_set_dc_input_curr_limit(dc_input_max);
-			is_kddi_adapter = 1;
+
+			mutex_lock(&aicl_sm_lock);
+			smb_adapter_type = SMB_ADAPTER_KDDI;
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+
 			_smb34x_set_fastchg_curr(get_fastchg_curr_def(MAX_FASTCHG_INPUT_CURR));
 
 		}
@@ -2737,17 +3161,44 @@ static	void aicl_check_worker(struct work_struct *work)
 	smb349_set_max_charging_vol();
 
 	
-	smb349_set_AICL_mode(0);
+	
+	
+
 
 	
 	aicl_worker_ongoing = 0;
 
-	printk("%s --\n", __func__);
+	switch (aicl_sm)
+	{
+		case AICL_SM_1ST_AICL_PROCESSING:
+			mutex_lock(&aicl_sm_lock);
+			aicl_sm =  AICL_SM_1ST_AICL_DONE;
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
 
+			
+			if(screen_state == 0)
+			{
+				pr_smb_info("%s	create_delay_phase2_worker, trigger after 5 sec,  aicl_sm=%d\n", __func__, SMB_DELAY_PHASE2_PERIOD_SEC);
+				
+				queue_delayed_work(smb349_wq, &smb_delay_phase2_check_task, (HZ * SMB_DELAY_PHASE2_PERIOD_SEC));
+			}
+			break;
+
+		case AICL_SM_2ST_AICL_PROCESSING:
+			mutex_lock(&aicl_sm_lock);
+			aicl_sm = AICL_SM_2ST_AICL_DONE;
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
+			break;
+
+	}
+
+	printk("%s --\n", __func__);
+	mutex_unlock(&phase_lock);
 	return;
 }
 
-#endif
 
 
 static u32 htc_fake_charger_for_testing(enum htc_power_source_type src)
@@ -2765,40 +3216,32 @@ static u32 htc_fake_charger_for_testing(enum htc_power_source_type src)
 
 static int smb349_set_cable_type(enum htc_power_source_type input_src)
 {
-	if(aicl_on)
-	{
-#ifndef SMB_AICL_DELAY_CHECK
-	int is_hc_mode = 0;
-	int smb349_aicl_result = 0;
-#endif
-	}
-
 
 	pr_smb_info("%s ++\n", __func__);
 
 	smb349_charging_src_old = smb349_charging_src_new;
 	smb349_charging_src_new = input_src;
 
-	is_kddi_adapter = 0;  
-
-	if(input_src != HTC_PWR_SOURCE_TYPE_BATT)
-		smb349_set_max_charging_vol();
-
-
 
 	if (get_kernel_flag() & KERNEL_FLAG_ENABLE_FAST_CHARGE)
 		input_src = htc_fake_charger_for_testing(input_src);
 
 	
-#ifdef SMB_AICL_DELAY_CHECK
-	cancel_delayed_work(&aicl_check_work);
+	cancel_delayed_work_sync(&aicl_check_work);
+
 	aicl_worker_ongoing = 0;
-#endif
 
 	switch (input_src) {
 		case HTC_PWR_SOURCE_TYPE_BATT:
 		default:
 			pr_smb_info("%s DISABLE_CHARGE\n", __func__);
+
+			mutex_lock(&aicl_sm_lock);
+			aicl_sm = AICL_SM_0_RESET;
+			smb_adapter_type = SMB_ADAPTER_UNKNOWN;  
+			mutex_unlock(&aicl_sm_lock);
+			pr_smb_info("%s smb_adapter_type: %d\n", __func__, smb_adapter_type);
+			pr_smb_info("%s	aicl_sm: %d\n", __func__, aicl_sm);
 
 			
 			smb349_config();
@@ -2810,80 +3253,27 @@ static int smb349_set_cable_type(enum htc_power_source_type input_src)
 		break;
 
 	case HTC_PWR_SOURCE_TYPE_WIRELESS:
+	case HTC_PWR_SOURCE_TYPE_DETECTING:
+	case HTC_PWR_SOURCE_TYPE_UNKNOWN_USB:
 	case HTC_PWR_SOURCE_TYPE_USB:
+		mutex_lock(&aicl_sm_lock);
+		aicl_sm = AICL_SM_1_USB_IN;
+		smb_adapter_type = SMB_ADAPTER_USB;
+		mutex_unlock(&aicl_sm_lock);
+		pr_smb_info("%s	aicl_sm: %d, smb_adapter_type: %d\n", __func__, aicl_sm, smb_adapter_type);
 		pr_smb_info("%s SLOW_CHARGE\n", __func__);
-		
-
-
-
-
-
-	if(aicl_on)
-	{
-	}
-	else
-	{
-		
-
-		
-		_smb349_set_dc_input_curr_limit(DC_INPUT_500MA);
-		
-		
-
-	}
-
-		
 		break;
 
 	case HTC_PWR_SOURCE_TYPE_AC:
 	case HTC_PWR_SOURCE_TYPE_9VAC:
 		pr_smb_info("%s FAST_CHARGE\n", __func__);
 
-		
-		smb349_set_hc_mode(SMB349_HC_MODE);
-		
-
 	if(aicl_on)
 	{
-
 		
-
-
-#ifndef SMB_AICL_DELAY_CHECK
-		msleep(SMB349_WAIT4_AICL_COMPLETE_MS);
-		pr_smb_info("smb349_is_AICL_complete: %d \n", smb349_is_AICL_complete());
-		is_hc_mode = smb349_is_hc_mode();
-		pr_smb_info("smb349_is_hc_mode: %d \n", is_hc_mode);
-		if(is_hc_mode == 0)
-		{
-
-			smb349_config();
-			_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
-
-			_smb34x_set_fastchg_curr(get_fastchg_curr_def(DEFAULT_FASTCHG_INPUT_CURR));
-
-			smb349_set_hc_mode(SMB349_HC_MODE);
-		}
-		else
-		{
-			smb349_aicl_result = smb349_get_AICL_result();
-			if((smb349_aicl_result > AICL_RESULT_1000MA) && (smb349_aicl_result < aicl_result_threshold))
-				_smb349_set_dc_input_curr_limit(DC_INPUT_1000MA);
-
-			smb349_adjust_fast_charge_curr();
-		}
-
-		
-#else		
-
-
-		
-		aicl_worker_ongoing = 1;
-		pr_smb_info("aicl_worker_ongoing = %d \n", aicl_worker_ongoing);
-		schedule_delayed_work(&aicl_check_work,
-			round_jiffies_relative(msecs_to_jiffies(AICL_CHECK_PERIOD_MS)));
-#endif
-
+		mutex_lock(&phase_lock);
+		smb349_aicl_phase1();
+		mutex_unlock(&phase_lock);
 	}
 	else
 	{
@@ -2897,7 +3287,6 @@ static int smb349_set_cable_type(enum htc_power_source_type input_src)
 	}
 
 		break;
-
 
 
 	case HTC_PWR_SOURCE_TYPE_MHL_AC:
@@ -2964,10 +3353,11 @@ int smb349_set_pwrsrc_and_charger_enable(enum htc_power_source_type input_src,
 
 	smb349_enable_charging_with_reason(chg_enable, SMB_BATT_CHG_DISABLED_BIT_KDRV);
 
+	if((!smb_batt_charging_disabled) && (input_src != HTC_PWR_SOURCE_TYPE_BATT))
+		smb349_set_max_charging_vol();
+
 	return rc;
 }
-
-
 
 EXPORT_SYMBOL(smb349_set_pwrsrc_and_charger_enable);
 
@@ -2977,6 +3367,12 @@ static void smb349_early_suspend(struct early_suspend *h)
 {
 	screen_state = 0;
 	pr_smb_info("%s screen_state : %d\n", __func__, screen_state);
+
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	mutex_lock(&phase_lock);
+	smb349_aicl_phase2();
+	mutex_unlock(&phase_lock);
+#endif
 
 	
 	smb349_adjust_kddi_dc_input_curr();
@@ -3084,8 +3480,24 @@ static int smb349_probe(struct i2c_client *client,
 
 #endif
 
+
 	
-	chg_stat_int = 0;
+	smb349_state_int = 0;
+	if(pdata->chg_stat_gpio > 0)
+	{
+		int rc = 0;
+		rc = request_any_context_irq(pdata->chg_stat_gpio,
+					smb349_state_handler,
+					IRQF_TRIGGER_RISING,
+					"chg_stat", NULL);
+
+		if (rc < 0)
+			pr_smb_err("request chg_stat irq failed!\n");
+		else {
+			INIT_WORK(&smb349_state_work, smb349_state_work_func);
+			smb349_state_int = pdata->chg_stat_gpio;
+		}
+	}
 
 	smb_chip_rev = pdata->chip_rev;
 	if(!smb_chip_rev)
@@ -3123,11 +3535,10 @@ static int smb349_probe(struct i2c_client *client,
 
 	INIT_DELAYED_WORK(&aicl_check_work, aicl_check_worker);
 	INIT_DELAYED_WORK(&smb_state_check_task, smb_state_check_worker);
-
+	INIT_DELAYED_WORK(&smb_delay_phase2_check_task, delay_phase2_check_worker);
 
 	
-	schedule_delayed_work(&smb_state_check_task,
-			round_jiffies_relative(msecs_to_jiffies(SMB_STATE_UPDATE_PERIOD_MS)));
+	queue_delayed_work(smb349_wq, &smb_state_check_task, (HZ * SMB_STATE_UPDATE_PERIOD_SEC));
 
 	data->address = client->addr;
 	data->client = client;
@@ -3143,7 +3554,7 @@ static int smb349_probe(struct i2c_client *client,
 
 	
 	if(board_mfg_mode() != 5)
-		smb349_enable_pwrsrc_with_reason(0, SMB_PWRSRC_DISABLED_BIT_KDRV);
+		_smb349_set_dc_input_curr_limit(DC_INPUT_500MA);
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	early_suspend.suspend = smb349_early_suspend;
@@ -3196,6 +3607,8 @@ static int __init smb349_init(void)
 
 	mutex_init(&charger_lock);
 	mutex_init(&pwrsrc_lock);
+	mutex_init(&aicl_sm_lock);
+	mutex_init(&phase_lock);
 
 	return i2c_add_driver(&smb349_driver);
 }
