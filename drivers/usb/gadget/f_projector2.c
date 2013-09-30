@@ -277,9 +277,12 @@ static int send_hsml_header07(struct projector2_dev *dev)
 {
 	struct usb_request *req;
 	int err;
+	static u32 seq;
 
-	dev->header.seq = 0;
-	dev->header.timestamp = 0;
+	
+	seq &= 0x0000ffff;
+	dev->header.seq = htons((u16)seq++);
+	dev->header.timestamp = htonl((u32)ktime_to_ms(ktime_get()));
 	dev->header.frameBufferDataSize = htonl(dev->hsml_proto->set_display_info.wHeight *
 			dev->hsml_proto->set_display_info.wWidth * (dev->bitsPixel / 8));
 
@@ -1075,6 +1078,8 @@ static int projector2_setup(struct hsml_protocol *config)
 	dev->hsml_proto->set_display_info.wWidth = DEFAULT_PROJ2_WIDTH;
 
 	memcpy(&dev->header.signature, sig, sizeof(dev->header.signature));
+	dev->header.seq = 0;
+	dev->header.timestamp = 0;
 
 	INIT_WORK(&dev->notifier_display_work, prj2_notify_display);
 	INIT_WORK(&dev->notifier_setting_work, prj2_notify_setting);
@@ -1116,8 +1121,7 @@ static ssize_t context_info_store(struct device *dev,
 		printk(KERN_ERR "%s: Array size invalid, array size should be N*28, size=%d\n",__func__,size);
 			return -EINVAL;
 	} else {
-		if ((size / CONTEXT_INFO_SIZE) >= 0 &&
-			(size / CONTEXT_INFO_SIZE) <= MAX_NUM_CONTEXT_INFO) {
+			if ((size / CONTEXT_INFO_SIZE) <= MAX_NUM_CONTEXT_INFO) {
 			mutex_lock(&hsml_header_lock);
 			memset(projector2_dev->header.context_info,0,sizeof(projector2_dev->header.context_info));
 			memcpy(projector2_dev->header.context_info, buf, size);
