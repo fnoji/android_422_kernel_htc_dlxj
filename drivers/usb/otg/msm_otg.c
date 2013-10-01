@@ -2041,15 +2041,12 @@ static void msm_chg_detect_work(struct work_struct *w)
 			if (test_bit(ID_A, &motg->inputs)) {
 				motg->chg_type = USB_ACA_DOCK_CHARGER;
 				motg->chg_state = USB_CHG_STATE_DETECTED;
-				motg->connect_type = CONNECT_TYPE_UNKNOWN;
 				delay = 0;
 				break;
 			}
 			if (line_state) { 
 				motg->chg_type = USB_PROPRIETARY_CHARGER;
 				motg->chg_state = USB_CHG_STATE_DETECTED;
-				motg->connect_type = CONNECT_TYPE_AC;
-				USBH_INFO("DP > VLGC\n");
 				delay = 0;
 			} else {
 				msm_chg_enable_secondary_det(motg);
@@ -2060,21 +2057,17 @@ static void msm_chg_detect_work(struct work_struct *w)
 			if (test_bit(ID_A, &motg->inputs)) {
 				motg->chg_type = USB_ACA_A_CHARGER;
 				motg->chg_state = USB_CHG_STATE_DETECTED;
-				motg->connect_type = CONNECT_TYPE_UNKNOWN;
 				delay = 0;
 				break;
 			}
 
-			if (line_state) {
+			if (line_state) 
 				motg->chg_type = USB_PROPRIETARY_CHARGER;
-				motg->connect_type = CONNECT_TYPE_AC;
-				USBH_INFO("DP > VLGC or/and DM > VLGC\n");
-			} else {
+			else
 				motg->chg_type = USB_SDP_CHARGER;
-				motg->connect_type = CONNECT_TYPE_UNKNOWN;
-			}
 
 			motg->chg_state = USB_CHG_STATE_DETECTED;
+			motg->connect_type = CONNECT_TYPE_UNKNOWN;
 			delay = 0;
 		}
 		break;

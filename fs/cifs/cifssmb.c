@@ -3828,7 +3828,7 @@ CIFSSMBGetCIFSACL(const int xid, struct cifs_tcon *tcon, __u16 fid,
 {
 	int rc = 0;
 	int buf_type = 0;
-	QUERY_SEC_DESC_REQ *pSMB;
+	QUERY_SEC_DESC_REQ *pSMB = NULL;
 	struct kvec iov[1];
 
 	cFYI(1, "GetCifsACL");
@@ -3956,7 +3956,8 @@ setCifsAclRetry:
 
 	if (pntsd && acllen) {
 		memcpy((char *)pSMBr + offsetof(struct smb_hdr, Protocol) +
-				data_offset, pntsd, acllen);
+			data_offset, pntsd, acllen);
+
 		inc_rfc1001_len(pSMB, byte_count + data_count);
 	} else
 		inc_rfc1001_len(pSMB, byte_count);
@@ -5801,7 +5802,8 @@ CIFSSMBSetFileDisposition(const int xid, struct cifs_tcon *tcon,
 	param_offset = offsetof(struct smb_com_transaction2_sfi_req, Fid) - 4;
 	offset = param_offset + params;
 
-	data_offset = (char *) (&pSMB->hdr.Protocol) + offset;
+	data_offset = (char *)pSMB +
+		offsetof(struct smb_hdr, Protocol) + offset;
 
 	count = 1;
 	pSMB->MaxParameterCount = cpu_to_le16(2);

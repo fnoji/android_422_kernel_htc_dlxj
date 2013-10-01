@@ -39,7 +39,7 @@
 	#define I(x...)
 #endif
 
-static int led_rw_delay;
+static int led_rw_delay, chip_enable;
 static int current_time;
 static struct i2c_client *private_lp5521_client;
 static struct mutex	led_mutex;
@@ -164,7 +164,7 @@ static int I2C_RxData_2(char *rxData, int length)
 	}
 
 	if (loop_i >= I2C_WRITE_RETRY_TIMES) {
-		printk(KERN_ERR "[PS_ERR][cm3629 error] %s retry over %d\n",
+		printk(KERN_ERR "[LED] %s retry over %d times\n",
 			__func__, I2C_WRITE_RETRY_TIMES);
 		return -EIO;
 	}
@@ -214,8 +214,13 @@ static void lp5521_led_enable(struct i2c_client *client)
 			gpio_free(pdata->ena_gpio);
 		}
 	} else if (pdata->ena_gpio_io_ext) {
-		ioext_gpio_set_value(pdata->ena_gpio_io_ext, 1);
+		ret = ioext_gpio_set_value(pdata->ena_gpio_io_ext, 1);
+		if (ret < 0) {
+			pr_err("[LED] %s: io_extender high failed %d\n", __func__, ret);
+			gpio_free(pdata->ena_gpio);
+		}
 	}
+	chip_enable = 1;
 	mutex_lock(&led_mutex);
 	
 	data = 0x40;
@@ -484,6 +489,10 @@ static void lp5521_led_off(struct i2c_client *client)
 	struct led_i2c_platform_data *pdata;
 
 	I(" %s +++\n" , __func__);
+	if (!chip_enable) {
+		I(" %s return, chip already disable\n" , __func__);
+		return;
+	}
 	pdata = client->dev.platform_data;
 	ret = i2c_read_block(client, 0x00, data1, 1);
 	if (!data1[0]) {
@@ -507,8 +516,13 @@ static void lp5521_led_off(struct i2c_client *client)
 			gpio_free(pdata->ena_gpio);
 		}
 	} else if (pdata->ena_gpio_io_ext) {
-		ioext_gpio_set_value(pdata->ena_gpio_io_ext, 0);
+		ret = ioext_gpio_set_value(pdata->ena_gpio_io_ext, 0);
+		if (ret < 0) {
+			pr_err("[LED] %s: io extender low failed %d\n", __func__, ret);
+			gpio_free(pdata->ena_gpio);
+		}
 	}
+	chip_enable = 0;
 	I(" %s ---\n" , __func__);
 }
 
@@ -700,7 +714,11 @@ static int lp5521_led_probe(struct i2c_client *client
 			return ret;
 		}
 	} else if (pdata->ena_gpio_io_ext) {
-		ioext_gpio_set_value(pdata->ena_gpio_io_ext, 1);
+		ret = ioext_gpio_set_value(pdata->ena_gpio_io_ext, 1);
+		if (ret < 0) {
+			pr_err("[LED] %s: io extender high failed %d\n", __func__, ret);
+			gpio_free(pdata->ena_gpio);
+		}
 	}
 	
 	if (pdata->tri_gpio) {

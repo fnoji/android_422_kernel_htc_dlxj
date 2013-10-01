@@ -108,7 +108,6 @@ static struct usb_string_node usb_string_array[] = {
 		.name = "projector2",
 	},
 
-
 };
 
 static int use_mfg_serialno;

@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include "board-deluxe_j.h"
 #include "../sound/soc/msm/msm-pcm-routing.h"
-#include "../sound/soc/msm/msm-compr-q6.h"
 
 #include <linux/gpio.h>
 #include <mach/tpa6185.h>
@@ -29,7 +28,6 @@
 #define HAC_PAMP_GPIO	6
 static atomic_t q6_effect_mode = ATOMIC_INIT(-1);
 extern unsigned int system_rev;
-extern unsigned int engineerid;
 
 static int deluxej_get_hw_component(void)
 {

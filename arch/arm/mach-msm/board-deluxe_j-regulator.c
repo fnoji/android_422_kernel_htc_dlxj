@@ -23,11 +23,12 @@ VREG_CONSUMERS(L1) = {
 };
 VREG_CONSUMERS(L2) = {
 	REGULATOR_SUPPLY("8921_l2",		NULL),
-	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csiphy.0"),
+    	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csiphy.0"),
 	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csiphy.1"),
-	REGULATOR_SUPPLY("mipi_csi_vdd",        "msm_csiphy.2"),
+   	REGULATOR_SUPPLY("mipi_csi_vdd",	"msm_csiphy.2"),
 	REGULATOR_SUPPLY("lvds_pll_vdda",	"lvds.0"),
 	REGULATOR_SUPPLY("dsi1_pll_vdda",	"mipi_dsi.1"),
+	REGULATOR_SUPPLY("dsi_pll_vdda",        "mdp.0"),
 };
 VREG_CONSUMERS(L3) = {
 	REGULATOR_SUPPLY("8921_l3",		NULL),
@@ -66,6 +67,7 @@ VREG_CONSUMERS(L9) = {
 VREG_CONSUMERS(L10) = {
 	REGULATOR_SUPPLY("8921_l10",		NULL),
 	REGULATOR_SUPPLY("iris_vddpa",		"wcnss_wlan.0"),
+	REGULATOR_SUPPLY("cir_3v",		NULL),
 };
 VREG_CONSUMERS(L11) = {
 	REGULATOR_SUPPLY("8921_l11",		NULL),
@@ -77,6 +79,7 @@ VREG_CONSUMERS(L12) = {
 };
 VREG_CONSUMERS(L14) = {
 	REGULATOR_SUPPLY("8921_l14",		NULL),
+	REGULATOR_SUPPLY("vreg_xoadc",		"pm8921-charger"),
 };
 VREG_CONSUMERS(L15) = {
 	REGULATOR_SUPPLY("8921_l15",		NULL),
@@ -202,6 +205,7 @@ VREG_CONSUMERS(LVS7) = {
 	REGULATOR_SUPPLY("8921_lvs7",		NULL),
 	REGULATOR_SUPPLY("pll_vdd",		"pil_riva"),
 	REGULATOR_SUPPLY("lvds_vdda",		"lvds.0"),
+	REGULATOR_SUPPLY("dsi_pll_vddio",       "mdp.0"),
 };
 VREG_CONSUMERS(USB_OTG) = {
 	REGULATOR_SUPPLY("8921_usb_otg",	NULL),
@@ -545,6 +549,9 @@ deluxe_j_rpm_regulator_init_data[] __devinitdata = {
 	RPM_NCP(NCP, 0,    0, 1800000, 1800000, "8921_l6", 1p60),
 };
 
+int deluxe_j_pm8921_regulator_pdata_len __devinitdata =
+	ARRAY_SIZE(deluxe_j_pm8921_regulator_pdata);
+
 #define RPM_REG_MAP(_id, _sleep_also, _voter, _supply, _dev_name) \
 	{ \
 		.vreg_id = RPM_VREG_ID_PM8921_##_id, \
@@ -570,16 +577,13 @@ static struct rpm_regulator_consumer_mapping
 	RPM_REG_MAP(S3,   0, 5, "krait3_dig",   "acpuclk-8064"),
 };
 
-int deluxe_j_pm8921_regulator_pdata_len __devinitdata =
-	ARRAY_SIZE(deluxe_j_pm8921_regulator_pdata);
-
 struct rpm_regulator_platform_data deluxe_j_rpm_regulator_pdata __devinitdata = {
-	.init_data		  = deluxe_j_rpm_regulator_init_data,
-	.num_regulators		  = ARRAY_SIZE(deluxe_j_rpm_regulator_init_data),
-	.version		  = RPM_VREG_VERSION_8960,
-	.vreg_id_vdd_mem	  = RPM_VREG_ID_PM8921_L24,
-	.vreg_id_vdd_dig	  = RPM_VREG_ID_PM8921_S3,
-	.consumer_map		  = msm_rpm_regulator_consumer_mapping,
+	.init_data		= deluxe_j_rpm_regulator_init_data,
+	.num_regulators		= ARRAY_SIZE(deluxe_j_rpm_regulator_init_data),
+	.version		= RPM_VREG_VERSION_8960,
+	.vreg_id_vdd_mem	= RPM_VREG_ID_PM8921_L24,
+	.vreg_id_vdd_dig	= RPM_VREG_ID_PM8921_S3,
+	.requires_tcxo_workaround = true,
+	.consumer_map    = msm_rpm_regulator_consumer_mapping,
 	.consumer_map_len = ARRAY_SIZE(msm_rpm_regulator_consumer_mapping),
-	.requires_tcxo_workaround = true
 };

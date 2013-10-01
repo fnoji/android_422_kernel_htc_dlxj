@@ -299,7 +299,6 @@ EXPORT_SYMBOL(unregister_reboot_notifier);
 void kernel_restart(char *cmd)
 {
 	kernel_restart_prepare(cmd);
-	disable_nonboot_cpus();
 	if (!cmd)
 		printk(KERN_EMERG "Restarting system.\n");
 	else
@@ -551,7 +550,6 @@ static int set_user(struct cred *new)
 
 	free_uid(new->user);
 	new->user = new_user;
-  sched_autogroup_create_attach(current);
 	return 0;
 }
 
@@ -1001,6 +999,7 @@ out:
 	write_unlock_irq(&tasklist_lock);
 	if (err > 0) {
 		proc_sid_connector(group_leader);
+		sched_autogroup_create_attach(group_leader);
 	}
 	return err;
 }
@@ -1022,7 +1021,7 @@ static int override_release(char __user *release, size_t len)
 
 	if (current->personality & UNAME26) {
 		const char *rest = UTS_RELEASE;
-		char buf[65] = { 0 };		
+		char buf[65] = { 0 };
 		int ndots = 0;
 		unsigned v;
 		size_t copy;

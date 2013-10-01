@@ -189,6 +189,7 @@ void HtcActOisBinder_open_init(void)
 		return;
 
 	pr_info("[OIS]  %s  start\n", __func__);
+	pr_info("[OIS]  %s  FW_Version=0x%x\n", __func__, RdFwVr());
 
 #if 0
 	RegReadA_lc898111(0x027F, &ois_data_8); 
@@ -247,7 +248,6 @@ void HtcActOisBinder_open_init(void)
 		RamWrite32A(0x1828, ois_data_32); 
 		ois_data_32 = (g_otp_data[28] << 24) + (g_otp_data[29] << 16) + (g_otp_data[30] << 8) + g_otp_data[31];
 		RamWrite32A(0x1928, ois_data_32); 
-
 
 		
 		ois_data_8 = g_otp_data[32];

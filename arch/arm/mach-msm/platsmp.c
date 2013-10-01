@@ -50,6 +50,19 @@ static void init_cpu_debug_counter_for_cold_boot(void)
 
 volatile int pen_release = -1;
 
+/*
+ * Write pen_release in a way that is guaranteed to be visible to all
+ * observers, irrespective of whether they're taking part in coherency
+ * or not.  This is necessary for the hotplug code to work reliably.
+ */
+static void __cpuinit write_pen_release(int val)
+{
+	pen_release = val;
+	smp_wmb();
+	__cpuc_flush_dcache_area((void *)&pen_release, sizeof(pen_release));
+	outer_clean_range(__pa(&pen_release), __pa(&pen_release + 1));
+}
+
 static DEFINE_SPINLOCK(boot_lock);
 
 void __cpuinit platform_secondary_init(unsigned int cpu)
@@ -58,6 +71,15 @@ void __cpuinit platform_secondary_init(unsigned int cpu)
 
 	gic_secondary_init(0);
 
+	/*
+	 * let the primary processor know we're out of the
+	 * pen, then head off into the C entry point
+	 */
+	write_pen_release(-1);
+
+	/*
+	 * Synchronise with the boot thread.
+	 */
 	spin_lock(&boot_lock);
 	spin_unlock(&boot_lock);
 }
@@ -91,11 +113,6 @@ static int __cpuinit krait_release_secondary_sim(unsigned long base, int cpu)
 
 	if (machine_is_apq8064_sim())
 		writel_relaxed(0xf0000, base_ptr+0x04);
-
-	if (machine_is_msm8974_sim()) {
-		writel_relaxed(0x800, base_ptr+0x04);
-		writel_relaxed(0x3FFF, base_ptr+0x14);
-	}
 
 	mb();
 	iounmap(base_ptr);
@@ -156,9 +173,6 @@ static int __cpuinit release_secondary(unsigned int cpu)
 	    machine_is_apq8064_sim())
 		return krait_release_secondary_sim(0x02088000, cpu);
 
-	if (machine_is_msm8974_sim())
-		return krait_release_secondary_sim(0xf9088000, cpu);
-
 	if (cpu_is_msm8960() || cpu_is_msm8930() || cpu_is_msm8930aa() ||
 	    cpu_is_apq8064() || cpu_is_msm8627() || cpu_is_apq8064ab())
 		return krait_release_secondary(0x02088000, cpu);
@@ -206,9 +220,15 @@ int __cpuinit boot_secondary(unsigned int cpu, struct task_struct *idle)
 
 	spin_lock(&boot_lock);
 
-	pen_release = cpu_logical_map(cpu);
-	__cpuc_flush_dcache_area((void *)&pen_release, sizeof(pen_release));
-	outer_clean_range(__pa(&pen_release), __pa(&pen_release + 1));
+	/*
+	 * The secondary processor is waiting to be released from
+	 * the holding pen - release it, then wait for it to flag
+	 * that it has been released by resetting pen_release.
+	 *
+	 * Note that "pen_release" is the hardware CPU ID, whereas
+	 * "cpu" is Linux's internal ID.
+	 */
+	write_pen_release(cpu_logical_map(cpu));
 
 	gic_raise_softirq(cpumask_of(cpu), 1);
 
@@ -218,8 +238,6 @@ int __cpuinit boot_secondary(unsigned int cpu, struct task_struct *idle)
 		if (pen_release == -1)
 			break;
 
-		dmac_inv_range((void *)&pen_release,
-			       (void *)(&pen_release+sizeof(pen_release)));
 		udelay(10);
 	}
 

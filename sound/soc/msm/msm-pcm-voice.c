@@ -49,10 +49,10 @@ static struct snd_pcm_hardware msm_pcm_hardware = {
 	.channels_max =         1,
 
 	.buffer_bytes_max =     4096 * 2,
-	.period_bytes_min =     4096,
+	.period_bytes_min =     2048,
 	.period_bytes_max =     4096,
 	.periods_min =          2,
-	.periods_max =          2,
+	.periods_max =          4,
 
 	.fifo_size =            0,
 };
@@ -470,6 +470,9 @@ static int msm_voice_tty_mode_put(struct snd_kcontrol *kcontrol,
 	voc_set_tty_mode(voc_get_session_id(VOICE_SESSION_NAME), tty_mode);
 
 	voc_set_tty_mode(voc_get_session_id(VOICE2_SESSION_NAME), tty_mode);
+
+	voc_set_tty_mode(voc_get_session_id(VOLTE_SESSION_NAME), tty_mode);
+
 	return 0;
 }
 static int msm_voice_widevoice_put(struct snd_kcontrol *kcontrol,

@@ -51,10 +51,6 @@ static inline bool pm_children_suspended(struct device *dev)
 		|| !atomic_read(&dev->power.child_count);
 }
 
-#if defined(CONFIG_USB_EHCI_MSM_HSIC)
-extern struct device *msm_hsic_host_dev;
-#endif	
-
 #if defined(CONFIG_ARCH_APQ8064) && defined(CONFIG_USB_EHCI_MSM_HSIC)
 extern int mdm_is_in_restart;
 #endif 
@@ -64,17 +60,17 @@ static inline void pm_runtime_get_noresume(struct device *dev)
 	atomic_inc(&dev->power.usage_count);
 
 	
-	
+/*	
 	#if defined(CONFIG_USB_EHCI_MSM_HSIC)
 	{
 		extern unsigned int get_radio_flag(void);
-		if (dev && msm_hsic_host_dev == dev && (mdm_is_in_restart || (get_radio_flag() & 0x0001))) {
+		if (dev && msm_hsic_host_dev == dev && (get_radio_flag() & 0x0001)) {
 			dev_info(dev, "%s[%d] usage_count[%d]\n", __func__, __LINE__,
 				atomic_read(&dev->power.usage_count));
 		}
 	}
 	#endif	
-	
+*/	
 	
 }
 
@@ -83,17 +79,17 @@ static inline void pm_runtime_put_noidle(struct device *dev)
 	atomic_add_unless(&dev->power.usage_count, -1, 0);
 
 	
-	
+/*	
 	#if defined(CONFIG_USB_EHCI_MSM_HSIC)
 	{
 		extern unsigned int get_radio_flag(void);
-		if (dev && msm_hsic_host_dev == dev && (mdm_is_in_restart || (get_radio_flag() & 0x0001))) {
+		if (dev && msm_hsic_host_dev == dev && (get_radio_flag() & 0x0001)) {
 			dev_info(dev, "%s[%d] usage_count[%d]\n", __func__, __LINE__,
 				atomic_read(&dev->power.usage_count));
 		}
 	}
 	#endif	
-	
+*/	
 	
 }
 

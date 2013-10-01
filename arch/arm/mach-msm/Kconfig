@@ -1610,6 +1610,12 @@ config MSM_RPCSERVER_WATCHDOG
 	help
 	  The dog_keepalive server handles watchdog events.
 
+config USERSPACE_VOLTAGE_CONTROL
+	bool "Enable Userspace CPU Voltage Control"
+	default y
+	help
+		userspace voltage control
+
 config MSM_RPC_WATCHDOG
 	depends on MSM_ONCRPCROUTER
 	default n
@@ -2257,6 +2263,14 @@ config MSM_PM8X60
 	depends on PM
 	bool
 
+config MSM_EVENT_TIMER
+	bool "Event timer"
+	help
+		This option enables a modules that manages a list of event timers that
+		need to be monitored by the PM. The enables the PM code to monitor
+		events that require the core to be awake and ready to handle the
+		event.
+
 config MSM_NOPM
 	default y if !PM
 	bool
@@ -2318,11 +2332,6 @@ config MSM_ETM
 	select MSM_JTAG
 	help
 	  Enables embedded trace collection on MSM8660
-
-config MSM_SLEEP_STATS
-	bool "Enable exporting of MSM sleep stats to userspace"
-	depends on CPU_IDLE
-	default n
 
 config MSM_SLEEP_STATS_DEVICE
 	bool "Enable exporting of MSM sleep device stats to userspace"
@@ -2679,6 +2688,7 @@ config MSM_HSIC_SYSMON_TEST
 config MACH_MONARUDO
 	depends on ARCH_APQ8064
 	bool "APQ8064 MONARUDO"
+	select FB_MSM_MIPI_DSI
 	help
 	  Support for the HTC APQ8064 MONARUDO.
 
@@ -2688,17 +2698,31 @@ config MACH_DELUXE_J
         help
           Support for the HTC APQ8064 DELUXE_J.
 
-config MACH_IMPRESSION_J
+config MACH_M7_WLJ
         depends on ARCH_APQ8064
-        bool "APQ8064 IMPRESSION_J"
+        bool "APQ8064 M7_WLJ"
+        select FB_MSM_MIPI_DSI
         help
-          Support for the HTC APQ8064 IMPRESSION_J.
+          Support for the HTC APQ8064 M7_WLJ.
 
-config MACH_M7_UL
+
+config MACH_M7_DXG
         depends on ARCH_APQ8064
-        bool "APQ8064 M7_UL"
+        bool "APQ8064 M7_DXG"
         help
-          Support for the HTC APQ8064 M7_UL.
+          Support for the HTC APQ8064 M7_DXG.
+
+config MACH_M7_DXG
+        depends on ARCH_APQ8064
+        bool "APQ8064 M7_DXG"
+        help
+          Support for the HTC APQ8064 M7_DXG.
+
+config MACH_T6_DXG
+        depends on ARCH_APQ8064
+        bool "APQ8064 T6_DXG"
+        help
+          Support for the HTC APQ8064 T6_DXG.
 
 config QSC_MODEM
         default n
