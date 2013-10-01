@@ -90,7 +90,6 @@ struct cable_detect_info {
 	int  audio_dock_lock;
 	int notify_init;
 	int (*detect_three_pogo_dock)(void);
-	int enable_vbus_usb_switch;
 } the_cable_info;
 
 
@@ -108,6 +107,9 @@ static void send_cable_connect_notify(int cable_type)
 
 	mutex_lock(&cable_notify_sem);
 	CABLE_DEBUG("%s: cable_type = %d\n", __func__, cable_type);
+
+	if (cable_type == CONNECT_TYPE_UNKNOWN)
+		cable_type = CONNECT_TYPE_USB;
 
 	if (pInfo->ac_9v_gpio && (cable_type == CONNECT_TYPE_USB
 				|| cable_type == CONNECT_TYPE_AC
@@ -260,7 +262,7 @@ static void check_vbus_in(struct work_struct *w)
 	if (vbus != vbus_in) {
 		vbus = vbus_in;
 
-		if(pInfo->accessory_type == DOCK_STATE_MHL && pInfo->enable_vbus_usb_switch == 0) {
+		if(pInfo->accessory_type == DOCK_STATE_MHL) {
 			CABLE_INFO("%s: usb_uart switch, MHL cable , Do nothing\n", __func__);
 		} else {
 			if (pInfo->usb_uart_switch)
@@ -935,7 +937,6 @@ static int cable_detect_probe(struct platform_device *pdev)
 		pInfo->mhl_1v2_power = pdata->mhl_1v2_power;
 		pInfo->get_adc_cb = pdata->get_adc_cb;
 		pInfo->detect_three_pogo_dock = pdata->detect_three_pogo_dock;
-		pInfo->enable_vbus_usb_switch = pdata->enable_vbus_usb_switch;
 #endif
 
 		if (pdata->is_wireless_charger)
@@ -1065,8 +1066,7 @@ static void usb_status_notifier_func(int cable_type)
 #endif
 		}
 
-	if (cable_type > CONNECT_TYPE_NONE ||
-			cable_type == CONNECT_TYPE_UNKNOWN) {
+	if (cable_type > CONNECT_TYPE_NONE) {
 		if (pInfo->ad_en_gpio) {
 			if (gpio_get_value(pInfo->ad_en_gpio) ==
 							pInfo->ad_en_active_state)
