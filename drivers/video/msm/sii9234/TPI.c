@@ -651,6 +651,8 @@ void	ProcessRgnd(void)
 	reg99RGNDRange = I2C_ReadByte(TPI_SLAVE_ADDR, 0x99) & 0x03;
 	TPI_DEBUG_PRINT(("Drv: RGND Reg 99 = %02X : ", (int)reg99RGNDRange));
 
+	
+	
 			SET_BIT(TPI_SLAVE_ADDR, 0x95, 5);
 
 			TPI_DEBUG_PRINT(("Drv: Waiting T_SRC_VBUS_CBUS_TO_STABLE (%d ms)\n", (int)T_SRC_VBUS_CBUS_TO_STABLE));
@@ -1100,7 +1102,9 @@ void D2ToD3(void)
 	ReadModifyWriteTPI(0x79, BIT_5 | BIT_4, BIT_4);
 
 	I2C_WriteByte(HDMI_SLAVE_ADDR, 0x01, 0x03);
-	I2C_WriteByte(0x7A, 0x3D, I2C_ReadByte(0x7A, 0x3D) & 0xFE);
+
+	I2C_WriteByte(0x7A, 0x3D, 0x3E);
+
 	fwPowerState = POWER_STATE_D3;
 }
 bool tpi_get_hpd_state(void)

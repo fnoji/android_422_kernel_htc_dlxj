@@ -60,7 +60,9 @@ extern	void	SiiMhlTxGotMhlStatus(uint8_t status_0, uint8_t status_1);
 extern	void	SiiMhlTxGotMhlMscMsg(uint8_t subCommand, uint8_t cmdData);
 extern	void	SiiMhlTxGotMhlWriteBurst(uint8_t *spadArray);
 extern	bool	IsMHLConnection(void);
+#ifdef CONFIG_FB_MSM_HDMI_MSM_PANEL_HDCP_SUPPORT
 extern	void	hdcp_deauthenticate(void);
+#endif
 extern	void	fill_black_screen(void);
 extern  void	update_mhl_status(bool isMHL, enum usb_connect_type statMHL);
 extern  void	sii9234_disableIRQ(void);

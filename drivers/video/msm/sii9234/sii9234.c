@@ -106,6 +106,9 @@ static bool sii9244_interruptable = false;
 static bool need_simulate_cable_out = false;
 #ifdef CONFIG_INTERNAL_CHARGING_SUPPORT
 static bool g_bPollDetect = false;
+#ifdef CONFIG_ARCH_MSM8X60
+int htc_batt_turn_off_mhl_dongle_5v(void);
+#endif
 #endif
 static bool g_bLowPowerModeOn = false;
 
@@ -164,8 +167,13 @@ void check_mhl_5v_status(void)
 	if (!pInfo)
 		return;
 	if(pInfo->isMHL && (pInfo->statMHL == CONNECT_TYPE_MHL_AC || pInfo->statMHL == CONNECT_TYPE_USB )){
+#ifdef CONFIG_ARCH_MSM8X60
+	htc_batt_turn_off_mhl_dongle_5v();
+#else
+
 		if(pInfo->enable_5v)
 			pInfo->enable_5v(0);
+#endif
 	}
 }
 #endif
@@ -619,6 +627,7 @@ static void sii9234_early_suspend(struct early_suspend *h)
 		return;
 	PR_DISP_INFO("%s(isMHL=%d)\n", __func__, pInfo->isMHL);
 
+	
 	if (pInfo->isMHL && !tpi_get_hpd_state())
 		sii9234_disableIRQ();
 
@@ -681,8 +690,12 @@ static void mhl_turn_off_5v(struct work_struct *w)
 	T_MHL_SII9234_INFO *pInfo = sii9234_info_ptr;
 	if (!pInfo)
 		return;
+#ifdef CONFIG_ARCH_MSM8X60
+        htc_batt_turn_off_mhl_dongle_5v();
+#else
 	if(pInfo->enable_5v)
 		pInfo->enable_5v(0);
+#endif
 }
 static void mhl_on_delay_handler(struct work_struct *w)
 {
