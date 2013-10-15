@@ -1016,76 +1016,66 @@ static void __init deluxe_j_early_reserve(void)
 }
 
 #ifdef CONFIG_HTC_BATT_8960
-#if 0
-static int pm8921_is_wireless_charger(void)
-{
-	int usb_in, dc_in;
-
-	usb_in = pm8921_is_usb_chg_plugged_in();
-	dc_in = pm8921_is_dc_chg_plugged_in();
-	pr_info("%s: usb_in=%d, dc_in=%d\n", __func__, usb_in, dc_in);
-	if (!usb_in && dc_in)
-		return 1;
-	else
-		return 0;
-}
-#endif
+static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
 
 static struct htc_battery_platform_data htc_battery_pdev_data = {
-        .guage_driver = 0,
-        .chg_limit_active_mask = HTC_BATT_CHG_LIMIT_BIT_TALK |
-                                                                HTC_BATT_CHG_LIMIT_BIT_NAVI,
-        .critical_low_voltage_mv = 3100,
-        .critical_alarm_voltage_mv = 3000,
-        .overload_vol_thr_mv = 4000,
-        .overload_curr_thr_ma = 0,
-
+	.guage_driver = 0,
+	.chg_limit_active_mask = HTC_BATT_CHG_LIMIT_BIT_TALK |
+								HTC_BATT_CHG_LIMIT_BIT_NAVI |
+								HTC_BATT_CHG_LIMIT_BIT_THRML,
+	.critical_low_voltage_mv = 3100,
+	.critical_alarm_vol_ptr = critical_alarm_voltage_mv,
+	.critical_alarm_vol_cols = sizeof(critical_alarm_voltage_mv) / sizeof(int),
+	.overload_vol_thr_mv = 4000,
+	.overload_curr_thr_ma = 0,
+	
 #ifdef CONFIG_SMB349_CHARGER
-        .icharger.name = "smb349",
-        .icharger.sw_safetytimer = 1,
-        .icharger.set_limit_charge_enable = smb349_limit_charge_enable,
-        .icharger.get_attr_text = pm8921_charger_get_attr_text_with_ext_charger,
-        .icharger.enable_5v_output = smb349_enable_5v_output,
+	.icharger.name = "smb349",
+	.icharger.sw_safetytimer = 1,
+	.icharger.set_limit_charge_enable = smb349_limit_charge_enable,
+	.icharger.get_attr_text = pm8921_charger_get_attr_text_with_ext_charger,
+	.icharger.enable_5v_output = smb349_enable_5v_output,
 #else
-        .icharger.name = "pm8921",
-        .icharger.sw_safetytimer = 0,
-        .icharger.set_limit_charge_enable = pm8921_limit_charge_enable,
-        .icharger.get_attr_text = pm8921_charger_get_attr_text,
-        .icharger.enable_5v_output = NULL,
+	.icharger.name = "pm8921",
+	.icharger.sw_safetytimer = 0,
+	.icharger.set_limit_charge_enable = pm8921_limit_charge_enable,
+	.icharger.get_attr_text = pm8921_charger_get_attr_text,
+	.icharger.enable_5v_output = NULL,
 #endif
-        .icharger.get_charging_source = pm8921_get_charging_source,
-        .icharger.get_charging_enabled = pm8921_get_charging_enabled,
-        .icharger.set_charger_enable = pm8921_charger_enable,
-        .icharger.set_pwrsrc_enable = pm8921_pwrsrc_enable,
-        .icharger.set_pwrsrc_and_charger_enable =
-                                                pm8921_set_pwrsrc_and_charger_enable,
-        .icharger.is_ovp = pm8921_is_charger_ovp,
-        .icharger.is_batt_temp_fault_disable_chg =
-                                                pm8921_is_batt_temp_fault_disable_chg,
-        //.icharger.is_vbus_unstable = pm8921_is_vbus_unstable,
+	.icharger.get_charging_source = pm8921_get_charging_source,
+	.icharger.get_charging_enabled = pm8921_get_charging_enabled,
+	.icharger.set_charger_enable = pm8921_charger_enable,
+	.icharger.set_pwrsrc_enable = pm8921_pwrsrc_enable,
+	.icharger.set_pwrsrc_and_charger_enable =
+						pm8921_set_pwrsrc_and_charger_enable,
+	.icharger.is_ovp = pm8921_is_charger_ovp,
+	.icharger.is_batt_temp_fault_disable_chg =
+						pm8921_is_batt_temp_fault_disable_chg,
+	//.icharger.is_vbus_unstable = pm8921_is_vbus_unstable,
 	.icharger.is_under_rating = pm8921_is_pwrsrc_under_rating,
-        .icharger.charger_change_notifier_register =
-                                                cable_detect_register_notifier,
-        .icharger.dump_all = pm8921_dump_all,
+	.icharger.charger_change_notifier_register =
+						cable_detect_register_notifier,
+	.icharger.dump_all = pm8921_dump_all,
 
 
-
-        .igauge.name = "pm8921",
-        .igauge.get_battery_voltage = pm8921_get_batt_voltage,
-        .igauge.get_battery_current = pm8921_bms_get_batt_current,
-        .igauge.get_battery_temperature = pm8921_get_batt_temperature,
-        .igauge.get_battery_id = pm8921_get_batt_id,
-        .igauge.get_battery_soc = pm8921_bms_get_batt_soc,
-        .igauge.get_battery_cc = pm8921_bms_get_batt_cc,
-        .igauge.is_battery_temp_fault = pm8921_is_batt_temperature_fault,
-        .igauge.is_battery_full = pm8921_is_batt_full,
-        .igauge.get_attr_text = pm8921_gauge_get_attr_text,
-        .igauge.register_lower_voltage_alarm_notifier =
-                                                pm8xxx_batt_lower_alarm_register_notifier,
-        .igauge.enable_lower_voltage_alarm = pm8xxx_batt_lower_alarm_enable,
-        .igauge.set_lower_voltage_alarm_threshold =
-                                                pm8xxx_batt_lower_alarm_threshold_set,
+	
+	.igauge.name = "pm8921",
+	.igauge.get_battery_voltage = pm8921_get_batt_voltage,
+	.igauge.get_battery_current = pm8921_bms_get_batt_current,
+	.igauge.get_battery_temperature = pm8921_get_batt_temperature,
+	.igauge.get_battery_id = pm8921_get_batt_id,
+	.igauge.get_battery_soc = pm8921_bms_get_batt_soc,
+	.igauge.get_battery_cc = pm8921_bms_get_batt_cc,
+	.igauge.is_battery_temp_fault = pm8921_is_batt_temperature_fault,
+	.igauge.is_battery_full = pm8921_is_batt_full,
+	.igauge.get_attr_text = pm8921_gauge_get_attr_text,
+	.igauge.register_lower_voltage_alarm_notifier =
+						pm8xxx_batt_lower_alarm_register_notifier,
+	.igauge.enable_lower_voltage_alarm = pm8xxx_batt_lower_alarm_enable,
+	.igauge.set_lower_voltage_alarm_threshold =
+						pm8xxx_batt_lower_alarm_threshold_set,
 };
+
 static struct platform_device htc_battery_pdev = {
 	.name = "htc_battery",
 	.id = -1,
