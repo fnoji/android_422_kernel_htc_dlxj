@@ -1015,7 +1015,7 @@ static void __init deluxe_j_early_reserve(void)
 	place_movable_zone();
 }
 
-fdef CONFIG_HTC_BATT_8960
+#ifdef CONFIG_HTC_BATT_8960
 static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
 
 static struct htc_battery_platform_data htc_battery_pdev_data = {
