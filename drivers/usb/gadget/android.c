@@ -78,14 +78,13 @@ static int os_type;
 #endif
 #include "u_ether.c"
 #include "u_bam_data.c"
-#include "f_mbim.c"
 #ifdef CONFIG_USB_ANDROID_NCM
 #include "f_ncm.c"
 #endif
 
 #include <linux/usb/htc_info.h>
 #include "f_projector.c"
-#include "f_projector2.c"
+//#include "f_projector2.c"
 
 #ifdef CONFIG_PERFLOCK
 #include <mach/perflock.h>
@@ -628,7 +627,9 @@ static struct android_usb_function rmnet_function = {
 	.performance_lock = 1,
 };
 
+#if 0
 #define MAX_MBIM_INSTANCES 1
+
 
 static int mbim_function_init(struct android_usb_function *f,
 					 struct usb_composite_dev *cdev)
@@ -653,6 +654,7 @@ static struct android_usb_function mbim_function = {
 	.bind_config	= mbim_function_bind_config,
 	.init		= mbim_function_init,
 };
+#endif
 
 static char diag_clients[32];	    
 static char diag_string[4][32];
@@ -1241,8 +1243,8 @@ static int ncm_function_bind_config(struct android_usb_function *f,
 		ncm->ethaddr[0], ncm->ethaddr[1], ncm->ethaddr[2],
 		ncm->ethaddr[3], ncm->ethaddr[4], ncm->ethaddr[5]);
 
-    if (c->cdev->gadget)
-        c->cdev->gadget->miMaxMtu = ETH_FRAME_LEN_MAX - ETH_HLEN;
+	if (c->cdev->gadget)
+		c->cdev->gadget->miMaxMtu = 9000;
 	ret = gether_setup_name(c->cdev->gadget, ncm->ethaddr, "usb");
 	if (ret) {
 		pr_err("%s: gether_setup failed\n", __func__);
@@ -1843,7 +1845,7 @@ struct android_usb_function projector_function = {
 	.bind_config	= projector_function_bind_config,
 	.attributes = projector_function_attributes
 };
-
+/*
 static int projector2_function_init(struct android_usb_function *f,
 		struct usb_composite_dev *cdev)
 {
@@ -1935,7 +1937,7 @@ struct android_usb_function projector2_function = {
 	.bind_config	= projector2_function_bind_config,
 	.attributes = projector2_function_attributes
 };
-
+*/
 
 static struct android_usb_function *supported_functions[] = {
 	&rndis_function,
@@ -1954,7 +1956,7 @@ static struct android_usb_function *supported_functions[] = {
 	&modem_function,
 	&serial_function,
 	&projector_function,
-	&projector2_function,
+//	&projector2_function,
 #ifdef CONFIG_USB_ANDROID_ACM
 	&acm_function,
 #endif
@@ -1966,7 +1968,6 @@ static struct android_usb_function *supported_functions[] = {
  	&rmnet_sdio_function,
  	&rmnet_smd_sdio_function,
  	&ccid_function,
-	&mbim_function,
 	NULL
 };
 
@@ -2501,8 +2502,8 @@ android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *c)
 	if (value < 0)
 		value = projector_ctrlrequest(cdev, c);
 
-	if (value < 0)
-		value = projector2_ctrlrequest(cdev, c);
+//	if (value < 0)
+//		value = projector2_ctrlrequest(cdev, c);
 
 	if (value < 0)
 		value = composite_setup(gadget, c);
@@ -2675,16 +2676,10 @@ static void android_usb_init_work(struct work_struct *data)
 			pr_err("android_usb: Cannot enable '%s'", "mtp");
 	}
 #endif
-	ret = android_enable_function(dev, "mass_storage");
-	if (ret)
-		pr_err("android_usb: Cannot enable '%s'", "mass_storage");
 
-#if 0
 	ret = android_enable_function(dev, "adb");
 	if (ret)
 		pr_err("android_usb: Cannot enable '%s'", "adb");
-#endif
-
 	
 	if (pdata->diag_init) {
 		ret = android_enable_function(dev, "diag");
