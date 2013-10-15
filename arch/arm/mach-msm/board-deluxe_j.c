@@ -1015,22 +1015,7 @@ static void __init deluxe_j_early_reserve(void)
 	place_movable_zone();
 }
 
-#ifdef CONFIG_HTC_BATT_8960
-#if 0
-static int pm8921_is_wireless_charger(void)
-{
-	int usb_in, dc_in;
-
-	usb_in = pm8921_is_usb_chg_plugged_in();
-	dc_in = pm8921_is_dc_chg_plugged_in();
-	pr_info("%s: usb_in=%d, dc_in=%d\n", __func__, usb_in, dc_in);
-	if (!usb_in && dc_in)
-		return 1;
-	else
-		return 0;
-}
-#endif
-
+fdef CONFIG_HTC_BATT_8960
 static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
 
 static struct htc_battery_platform_data htc_battery_pdev_data = {
@@ -1043,7 +1028,7 @@ static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.critical_alarm_vol_cols = sizeof(critical_alarm_voltage_mv) / sizeof(int),
 	.overload_vol_thr_mv = 4000,
 	.overload_curr_thr_ma = 0,
-
+	
 #ifdef CONFIG_SMB349_CHARGER
 	.icharger.name = "smb349",
 	.icharger.sw_safetytimer = 1,
@@ -1073,7 +1058,7 @@ static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.icharger.dump_all = pm8921_dump_all,
 
 
-
+	
 	.igauge.name = "pm8921",
 	.igauge.get_battery_voltage = pm8921_get_batt_voltage,
 	.igauge.get_battery_current = pm8921_bms_get_batt_current,
