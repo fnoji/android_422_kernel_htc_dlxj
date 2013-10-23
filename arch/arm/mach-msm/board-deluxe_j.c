@@ -1012,13 +1012,17 @@ static void __init deluxe_j_early_reserve(void)
 	place_movable_zone();
 }
 
+static int critical_alarm_voltage_mv[] = {3000, 3100, 3200, 3400};
+
 #ifdef CONFIG_HTC_BATT_8960
 static struct htc_battery_platform_data htc_battery_pdev_data = {
 	.guage_driver = 0,
 	.chg_limit_active_mask = HTC_BATT_CHG_LIMIT_BIT_TALK |
-								HTC_BATT_CHG_LIMIT_BIT_NAVI,
+			  	 HTC_BATT_CHG_LIMIT_BIT_NAVI |
+				 HTC_BATT_CHG_LIMIT_BIT_THRML,
 	.critical_low_voltage_mv = 3100,
-	.critical_alarm_voltage_mv = 3000,
+	.critical_alarm_vol_ptr = critical_alarm_voltage_mv,
+	.critical_alarm_vol_cols = sizeof(critical_alarm_voltage_mv) / sizeof(int),
 	.overload_vol_thr_mv = 4000,
 	.overload_curr_thr_ma = 0,
 	
@@ -1706,7 +1710,7 @@ static struct android_usb_platform_data android_usb_pdata = {
 	.functions = usb_functions_all,
 	.update_pid_and_serial_num = usb_diag_update_pid_and_serial_num,
 	.usb_id_pin_gpio = USB1_HS_ID_GPIO,
-	.usb_rmnet_interface = "HSIC,HSIC",
+	.usb_rmnet_interface = "HSIC:HSIC",
 	.usb_diag_interface = "diag,diag_mdm",
 	.fserial_init_string = "HSIC:modem,tty,tty:autobot,tty:serial,tty:autobot",
 	.serial_number = "000000000000",
@@ -1941,7 +1945,16 @@ void deluxe_j_pm8xxx_adc_device_register(void)
 
 void deluxe_j_add_usb_devices(void)
 {
+	int rc;
 	printk(KERN_INFO "%s rev: %d\n", __func__, system_rev);
+
+	if (system_rev >= PVT) {
+		rc = pm8xxx_gpio_config(otg_pmic_gpio_pvt[0].gpio,
+		  &otg_pmic_gpio_pvt[0].config);
+		if (rc)
+			pr_info("[USB_BOARD] %s: Config ERROR: GPIO=%u, rc=%d\n",
+			  __func__, otg_pmic_gpio_pvt[0].gpio, rc);
+	}
 
 	android_usb_pdata.products[0].product_id =
 			android_usb_pdata.product_id;
